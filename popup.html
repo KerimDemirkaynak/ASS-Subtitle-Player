@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ASS Subtitle Player</title>
+    <style>
+        body { font-family: 'Segoe UI', Tahoma, sans-serif; background-color: #1e1e1e; color: #ffffff; margin: 0; padding: 15px; width: 250px; display: flex; flex-direction: column; gap: 12px; }
+        h3 { margin: 0; font-size: 16px; text-align: center; border-bottom: 1px solid #333; padding-bottom: 8px; }
+        .row { display: flex; justify-content: space-between; align-items: center; }
+        .switch { position: relative; display: inline-block; width: 40px; height: 22px; }
+        .switch input { opacity: 0; width: 0; height: 0; }
+        .slider { position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background-color: #555; transition: .4s; border-radius: 22px; }
+        .slider:before { position: absolute; content: ""; height: 16px; width: 16px; left: 3px; bottom: 3px; background-color: white; transition: .4s; border-radius: 50%; }
+        input:checked + .slider { background-color: #2e7d32; }
+        input:checked + .slider:before { transform: translateX(18px); }
+        button, .file-label { background-color: #1976d2; color: white; border: none; padding: 10px; border-radius: 6px; cursor: pointer; font-weight: bold; text-align: center; font-size: 13px; width: 100%; box-sizing: border-box; }
+        .file-label { background-color: #d84315; display: block; }
+        #status { font-size: 11px; text-align: center; color: #aaa; margin-top: 5px; }
+    </style>
+</head>
+<body>
+    <h3>🎬 Subtitle Player</h3>
+    <div class="row">
+        <span>Enable Extension</span>
+        <label class="switch">
+            <input type="checkbox" id="toggle-extension" checked>
+            <span class="slider"></span>
+        </label>
+    </div>
+    
+    <button id="upload-btn" class="file-label">📁 Select Subtitle (.ass, .srt)</button>
+    
+    <button id="ratio-btn">📺 Format: 16:9</button>
+    <div id="status">Waiting for file...</div>
+    <script src="popup.js"></script>
+</body>
+</html>
