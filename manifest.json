@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "ASS Subtitle Player",
-  "version": "1.5",
+  "version": "1.6",
   "description": "Play local .ass and .srt subtitles on any web video (including HiAnime). Features a modern panel and 4:3/16:9 support.",
   "permissions": [
     "activeTab",
@@ -14,7 +14,7 @@
   "browser_specific_settings": {
     "gecko": {
       "id": "ass-subtitle-player@senindomainin.com",
-      "strict_min_version": "140.0",
+      "strict_min_version": "142.0",
       "data_collection_permissions": {
         "required": [
           "none"
