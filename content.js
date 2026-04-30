@@ -13,8 +13,7 @@ chrome.storage.local.get(['isEnabled', 'is43Mode', 'subSize'], (data) => {
 
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     if (request.type === "SHOW_PICKER_UI") {
-        // ÇİFT ÇIKMA SORUNUNUN ÇÖZÜMÜ: 
-        // Sadece içinde video barındıran frame bu kutuyu ekrana çizsin.
+        // Çift çıkma sorununu önlemek için sadece video olan frame'de çalıştır
         if (document.querySelector('video')) {
             injectFilePickerUI();
         }
@@ -28,10 +27,9 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         subSizeMultiplier = request.size / 100;
         updateSubStyle();
     }
-    return true;
+    // Hata veren return true; satırı buradan kaldırıldı!
 });
 
-// Sayfa içi UI enjeksiyonu
 function injectFilePickerUI() {
     let existing = document.getElementById('ass-ext-floating-picker');
     if (existing) existing.remove();
@@ -47,7 +45,7 @@ function injectFilePickerUI() {
     `;
 
     const title = document.createElement('div');
-    title.innerText = '🎬 Select Subtitle File';
+    title.innerHTML = '🎬 Select Subtitle File';
     title.style.cssText = 'font-weight: bold; font-size: 14px; text-align: center; border-bottom: 1px solid #444; padding-bottom: 5px; margin-bottom: 5px;';
 
     const fileInput = document.createElement('input');
@@ -76,7 +74,7 @@ function injectFilePickerUI() {
                     startSyncLoop(video);
                 }
             }
-            container.remove(); // İşlem bitince UI'ı yok et
+            container.remove();
         };
         const encoding = (extension === 'srt') ? 'utf-8' : 'windows-1254';
         reader.readAsText(file, encoding);
