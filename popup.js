@@ -2,13 +2,17 @@ document.addEventListener('DOMContentLoaded', () => {
     const toggleExtension = document.getElementById('toggle-extension');
     const uploadBtn = document.getElementById('upload-btn');
     const ratioBtn = document.getElementById('ratio-btn');
-    const statusText = document.getElementById('status');
+    const sizeSlider = document.getElementById('size-slider');
+    const sizeValue = document.getElementById('size-value');
 
-    // Durumu yükle
-    chrome.storage.local.get(['isEnabled', 'is43Mode'], (data) => {
+    chrome.storage.local.get(['isEnabled', 'is43Mode', 'subSize'], (data) => {
         if (data.isEnabled !== undefined) toggleExtension.checked = data.isEnabled;
         if (data.is43Mode !== undefined) {
             ratioBtn.innerText = data.is43Mode ? '📺 Format: 4:3' : '📺 Format: 16:9';
+        }
+        if (data.subSize !== undefined) {
+            sizeSlider.value = data.subSize;
+            sizeValue.innerText = data.subSize + '%';
         }
     });
 
@@ -26,24 +30,22 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     });
 
-    // En önemli kısım: Dosya seçme komutunu tüm frame'lere gönder
-    uploadBtn.addEventListener('click', () => {
-        statusText.innerText = "Opening file picker...";
-        broadcastMessage({ type: "TRIGGER_PICKER" });
+    sizeSlider.addEventListener('input', (e) => {
+        const val = e.target.value;
+        sizeValue.innerText = val + '%';
+        chrome.storage.local.set({ subSize: val });
+        broadcastMessage({ type: "CHANGE_SIZE", size: val });
     });
 
-    // Tüm frame'lere mesaj gönderen fonksiyon
+    uploadBtn.addEventListener('click', () => {
+        broadcastMessage({ type: "SHOW_PICKER_UI" });
+        window.close(); // Popup'ı kapat ki mobilde işlem yarım kalmasın, sayfaya dönülsün.
+    });
+
     function broadcastMessage(msg) {
         chrome.tabs.query({active: true, currentWindow: true}, (tabs) => {
             if (tabs[0]) {
-                // frameId: undefined tüm frame'lere gönderir
-                chrome.tabs.sendMessage(tabs[0].id, msg, {frameId: undefined}, (response) => {
-                    if (chrome.runtime.lastError) { /* ignore */ }
-                    if (response && response.success) {
-                        statusText.innerText = `✅ Loaded in player!`;
-                        statusText.style.color = "#4caf50";
-                    }
-                });
+                chrome.tabs.sendMessage(tabs[0].id, msg, {frameId: undefined});
             }
         });
     }
