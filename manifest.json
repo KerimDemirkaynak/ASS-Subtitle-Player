@@ -1,12 +1,13 @@
 {
   "manifest_version": 3,
   "name": "ASS Subtitle Player",
-  "version": "1.6",
-  "description": "Play local .ass and .srt subtitles on any web video (including HiAnime). Features a modern panel and 4:3/16:9 support.",
+  "version": "2.1.0",
+  "description": "Play local/searched .ass, .ssa and .srt subtitles on YouTube, Netflix, Crunchyroll and any web video. Real-time sync, FPS conversion, dual subtitles, drag positioning, OpenSubtitles search and more.",
   "permissions": [
     "activeTab",
     "scripting",
-    "storage"
+    "storage",
+    "unlimitedStorage"
   ],
   "host_permissions": [
     "<all_urls>"
@@ -37,6 +38,11 @@
     },
     "default_popup": "popup.html"
   },
+  "background": {
+    "scripts": [
+      "background.js"
+    ]
+  },
   "content_scripts": [
     {
       "matches": [
@@ -44,6 +50,7 @@
       ],
       "all_frames": true,
       "js": [
+        "i18n.js",
         "content.js"
       ],
       "run_at": "document_start"
