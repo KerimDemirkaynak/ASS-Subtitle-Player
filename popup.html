@@ -2,12 +2,12 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <title>Subtitle Player</title>
 <style>
     :root {
-        --bg: #121212;
-        --bg-2: #1a1a1a;
+        --bg: #000000;
+        --bg-2: #0a0a0a;
         --panel: #1c1c1e;
         --panel-2: #232325;
         --line: #2c2c2e;
@@ -24,9 +24,16 @@
     * { box-sizing: border-box; }
     body {
         font-family: -apple-system, 'Segoe UI', Roboto, sans-serif;
-        background: linear-gradient(180deg, var(--bg) 0%, var(--bg-2) 100%);
-        color: var(--text); margin: 0; padding: 11px;
-        width: 300px; display: flex; flex-direction: column; gap: 8px;
+        background: var(--bg);
+        color: var(--text); 
+        margin: 0 auto; 
+        padding: 11px;
+        width: 100%; 
+        max-width: 500px;
+        min-width: 300px;
+        display: flex; 
+        flex-direction: column; 
+        gap: 8px;
         font-size: 12px;
     }
     .header-row { display:flex; align-items:center; justify-content:space-between; }
