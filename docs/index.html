@@ -1,0 +1,558 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>ASS Subtitle Player | Web Video Altyazı Eklentisi</title>
+    <!-- Font Awesome (ikonlar) -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css" />
+    <style>
+        /* ---------- RESET & GENEL ---------- */
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+            background: #0b0e14;
+            color: #e8edf5;
+            line-height: 1.6;
+        }
+        a {
+            color: #7aa9ff;
+            text-decoration: none;
+            transition: 0.2s;
+        }
+        a:hover {
+            color: #aac4ff;
+            text-decoration: underline;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 0 24px;
+        }
+        section {
+            padding: 60px 0;
+            border-bottom: 1px solid #1f2a36;
+        }
+        section:last-of-type {
+            border-bottom: none;
+        }
+        h2 {
+            font-size: 2.2rem;
+            font-weight: 600;
+            margin-bottom: 1.2rem;
+            letter-spacing: -0.02em;
+            background: linear-gradient(135deg, #f0f6ff, #88b4ff);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+        .badge {
+            display: inline-block;
+            background: #2a3a4e;
+            padding: 0.25rem 1rem;
+            border-radius: 30px;
+            font-size: 0.85rem;
+            color: #b0cbe5;
+            margin-right: 0.5rem;
+        }
+
+        /* ---------- HEADER / NAV ---------- */
+        nav {
+            padding: 18px 0;
+            background: #0f141c;
+            border-bottom: 1px solid #1f2a36;
+            position: sticky;
+            top: 0;
+            backdrop-filter: blur(8px);
+            z-index: 10;
+        }
+        nav .container {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            flex-wrap: wrap;
+            gap: 16px;
+        }
+        .logo {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            font-size: 1.5rem;
+            font-weight: 700;
+            color: #d6e4ff;
+        }
+        .logo i {
+            color: #6d9eff;
+            font-size: 2rem;
+        }
+        .nav-links {
+            display: flex;
+            gap: 28px;
+            font-weight: 500;
+            align-items: center;
+        }
+        .nav-links a {
+            color: #b6c9e0;
+        }
+        .nav-links a:hover {
+            color: #fff;
+            text-decoration: none;
+        }
+        .btn-primary {
+            background: #3b6eff;
+            border: none;
+            padding: 10px 24px;
+            border-radius: 40px;
+            font-weight: 600;
+            color: #fff;
+            transition: 0.2s;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            cursor: pointer;
+            border: 1px solid #3b6eff;
+        }
+        .btn-primary:hover {
+            background: #2952d9;
+            border-color: #2952d9;
+            text-decoration: none;
+            color: #fff;
+        }
+        .btn-secondary {
+            background: transparent;
+            border: 1px solid #48658a;
+            padding: 10px 24px;
+            border-radius: 40px;
+            font-weight: 600;
+            color: #c6d9f0;
+            transition: 0.2s;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            cursor: pointer;
+        }
+        .btn-secondary:hover {
+            background: #1f2a36;
+            border-color: #7aa9ff;
+            color: #fff;
+            text-decoration: none;
+        }
+
+        /* ---------- HERO ---------- */
+        #hero {
+            padding: 70px 0 50px 0;
+            background: radial-gradient(ellipse at 20% 30%, #14202b, #0b0e14 70%);
+        }
+        .hero-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 50px;
+            align-items: center;
+        }
+        .hero-text h1 {
+            font-size: 3.2rem;
+            font-weight: 700;
+            line-height: 1.2;
+            letter-spacing: -0.03em;
+        }
+        .hero-text h1 span {
+            color: #6d9eff;
+        }
+        .hero-text p {
+            font-size: 1.2rem;
+            color: #bccfe3;
+            margin: 24px 0 32px;
+            max-width: 520px;
+        }
+        .hero-buttons {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 16px;
+        }
+        .hero-img {
+            background: #17212b;
+            border-radius: 24px;
+            padding: 12px;
+            box-shadow: 0 20px 40px -8px rgba(0, 0, 0, 0.7);
+            border: 1px solid #2b3c4d;
+        }
+        .hero-img img {
+            width: 100%;
+            border-radius: 16px;
+            display: block;
+        }
+        .hero-img .caption {
+            text-align: center;
+            font-size: 0.9rem;
+            color: #8aa2bc;
+            margin-top: 10px;
+        }
+
+        /* ---------- ÖZELLİKLER ---------- */
+        .feature-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+            gap: 30px;
+            margin-top: 20px;
+        }
+        .feature-card {
+            background: #131c26;
+            padding: 28px 22px;
+            border-radius: 20px;
+            border: 1px solid #23303d;
+            transition: 0.25s;
+        }
+        .feature-card:hover {
+            border-color: #3b6eff;
+            transform: translateY(-4px);
+            box-shadow: 0 8px 24px rgba(59, 110, 255, 0.08);
+        }
+        .feature-card i {
+            font-size: 2.2rem;
+            color: #6d9eff;
+            margin-bottom: 14px;
+        }
+        .feature-card h3 {
+            font-size: 1.3rem;
+            font-weight: 600;
+            margin-bottom: 8px;
+        }
+        .feature-card p {
+            color: #b0c5db;
+            font-size: 0.98rem;
+        }
+
+        /* ---------- KULLANIM ADIMLARI ---------- */
+        .steps {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 30px;
+            margin-top: 30px;
+            counter-reset: step;
+        }
+        .step-item {
+            background: #131c26;
+            padding: 28px 20px;
+            border-radius: 20px;
+            border: 1px solid #23303d;
+            position: relative;
+            padding-left: 60px;
+        }
+        .step-item::before {
+            counter-increment: step;
+            content: counter(step);
+            position: absolute;
+            left: 18px;
+            top: 28px;
+            font-size: 1.6rem;
+            font-weight: 700;
+            color: #6d9eff;
+            background: #1f2c3b;
+            width: 36px;
+            height: 36px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 50%;
+        }
+        .step-item h4 {
+            font-size: 1.15rem;
+            margin-bottom: 6px;
+        }
+        .step-item p {
+            color: #b0c5db;
+            font-size: 0.95rem;
+        }
+
+        /* ---------- EKRAN GÖRÜNTÜLERİ ---------- */
+        .screenshot-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 30px;
+            margin-top: 20px;
+        }
+        .screenshot-card {
+            background: #131c26;
+            border-radius: 18px;
+            overflow: hidden;
+            border: 1px solid #23303d;
+        }
+        .screenshot-card img {
+            width: 100%;
+            display: block;
+        }
+        .screenshot-card .label {
+            padding: 14px 18px;
+            font-weight: 500;
+            background: #0f1822;
+            border-top: 1px solid #23303d;
+            color: #b8cee8;
+        }
+
+        /* ---------- MAĞAZA / İNDİR ---------- */
+        .store-badges {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 18px;
+            margin-top: 20px;
+        }
+        .store-badge {
+            background: #1f2a36;
+            padding: 12px 24px;
+            border-radius: 40px;
+            display: inline-flex;
+            align-items: center;
+            gap: 12px;
+            font-weight: 500;
+            border: 1px solid #31445a;
+            transition: 0.2s;
+        }
+        .store-badge:hover {
+            background: #2a3b4e;
+            border-color: #6d9eff;
+            text-decoration: none;
+            color: #fff;
+        }
+        .store-badge i {
+            font-size: 1.8rem;
+            color: #6d9eff;
+        }
+
+        /* ---------- FOOTER ---------- */
+        footer {
+            padding: 40px 0 30px;
+            border-top: 1px solid #1f2a36;
+            color: #869bb3;
+            font-size: 0.95rem;
+            text-align: center;
+        }
+        footer a {
+            color: #7aa9ff;
+        }
+
+        /* ---------- RESPONSIVE ---------- */
+        @media (max-width: 900px) {
+            .hero-grid {
+                grid-template-columns: 1fr;
+                text-align: center;
+            }
+            .hero-text p {
+                max-width: 100%;
+                margin-left: auto;
+                margin-right: auto;
+            }
+            .hero-buttons {
+                justify-content: center;
+            }
+            .screenshot-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+        @media (max-width: 600px) {
+            h2 {
+                font-size: 1.8rem;
+            }
+            .hero-text h1 {
+                font-size: 2.2rem;
+            }
+            .nav-links {
+                gap: 14px;
+                font-size: 0.9rem;
+                flex-wrap: wrap;
+                justify-content: center;
+            }
+            .logo {
+                font-size: 1.3rem;
+            }
+            .btn-primary,
+            .btn-secondary {
+                padding: 8px 18px;
+                font-size: 0.9rem;
+            }
+        }
+    </style>
+</head>
+<body>
+    <!-- NAV -->
+    <nav>
+        <div class="container">
+            <div class="logo">
+                <i class="fas fa-closed-captioning"></i>
+                <span>ASS Subtitle</span>
+            </div>
+            <div class="nav-links">
+                <a href="#features">Özellikler</a>
+                <a href="#howto">Kullanım</a>
+                <a href="#screenshots">Görseller</a>
+                <a href="#download" class="btn-primary" style="padding:8px 20px;">
+                    <i class="fas fa-download"></i> İndir
+                </a>
+            </div>
+        </div>
+    </nav>
+
+    <!-- HERO -->
+    <section id="hero">
+        <div class="container hero-grid">
+            <div class="hero-text">
+                <div style="margin-bottom:12px;">
+                    <span class="badge"><i class="fas fa-check-circle"></i> Firefox</span>
+                    <span class="badge"><i class="fab fa-github"></i> Chrome (ZIP)</span>
+                </div>
+                <h1>ASS &amp; SRT <br /><span>altyazı oynatıcı</span></h1>
+                <p>
+                    YouTube, Netflix, Crunchyroll ve tüm web videolarında <strong>.ass · .ssa · .srt</strong>
+                    dosyalarını oynatın. Gerçek zamanlı senkronizasyon, çift dil, OpenSubtitles araması ve daha fazlası.
+                </p>
+                <div class="hero-buttons">
+                    <a href="https://addons.mozilla.org/firefox/addon/ass-subtitle-player/" target="_blank" class="btn-primary"><i class="fab fa-firefox-browser"></i> Firefox Ekle</a>
+                    <a href="https://github.com/KerimDemirkaynak/ASS-Subtitle-Player/tree/main" target="_blank" class="btn-secondary"><i class="fab fa-chrome"></i> Chrome (ZIP İndir)</a>
+                </div>
+            </div>
+            <div class="hero-img">
+                <img src="https://addons.mozilla.org/user-media/previews/thumbs/368/368730.jpg?modified=1777506310" alt="ASS Subtitle Player arayüz önizlemesi" />
+                <div class="caption">Kullanıcı arayüzü — temiz ve hızlı</div>
+            </div>
+        </div>
+    </section>
+
+    <!-- ÖZELLİKLER -->
+    <section id="features">
+        <div class="container">
+            <h2><i class="fas fa-star" style="color:#6d9eff; margin-right:12px;"></i> Öne Çıkan Özellikler</h2>
+            <div class="feature-grid">
+                <div class="feature-card">
+                    <i class="fas fa-file-alt"></i>
+                    <h3>.ass · .ssa · .srt</h3>
+                    <p>Tüm popüler altyazı formatlarını destekler. Sürükle-bırak ile yükleyin.</p>
+                </div>
+                <div class="feature-card">
+                    <i class="fas fa-search"></i>
+                    <h3>OpenSubtitles entegrasyonu</h3>
+                    <p>Film veya dizi altyazılarını doğrudan uzantı içinde arayın, tek tıkla yükleyin.</p>
+                </div>
+                <div class="feature-card">
+                    <i class="fas fa-language"></i>
+                    <h3>Çift dil</h3>
+                    <p>Aynı anda iki farklı dilde altyazı gösterin (üstte ve altta). Dil öğrenmek için ideal.</p>
+                </div>
+                <div class="feature-card">
+                    <i class="fas fa-sliders-h"></i>
+                    <h3>Gelişmiş senkronizasyon</h3>
+                    <p>Gecikmeyi ±0.1s/1s ayarlayın, FPS dönüşümü, deneysel ses otomatik senkronu.</p>
+                </div>
+                <div class="feature-card">
+                    <i class="fas fa-arrows-alt"></i>
+                    <h3>Sürükle &amp; konumlandır</h3>
+                    <p>Altyazı kutusunu ekranın istediğiniz yerine taşıyın. Tüm platformlarda çalışır.</p>
+                </div>
+                <div class="feature-card">
+                    <i class="fas fa-palette"></i>
+                    <h3>Site özel stiller</h3>
+                    <p>Her site için ayrı yazı tipi, boyut, renk ve gölge kaydedin.</p>
+                </div>
+                <div class="feature-card">
+                    <i class="fas fa-expand"></i>
+                    <h3>En boy &amp; tam ekran</h3>
+                    <p>Otomatik, 16:9, 4:3 veya Dikey mod (TikTok/Shorts). JW Player ile uyumlu.</p>
+                </div>
+                <div class="feature-card">
+                    <i class="fas fa-keyboard"></i>
+                    <h3>Kısayol tuşları</h3>
+                    <p><kbd>Alt</kbd> kombinasyonları ile gecikme ayarı, çift dil geçişi, etkinleştirme.</p>
+                </div>
+                <div class="feature-card">
+                    <i class="fas fa-sync-alt"></i>
+                    <h3>Otomatik geri yükle</h3>
+                    <p>Sayfa yenilendiğinde veya bölüm değiştiğinde son altyazılarınız otomatik yüklenir.</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- KULLANIM ADIMLARI -->
+    <section id="howto">
+        <div class="container">
+            <h2><i class="fas fa-rocket" style="color:#6d9eff; margin-right:12px;"></i> Nasıl Kullanılır?</h2>
+            <div class="steps">
+                <div class="step-item">
+                    <h4>Videoyu aç</h4>
+                    <p>YouTube, Netflix, Crunchyroll veya herhangi bir video oynatıcıya gidin.</p>
+                </div>
+                <div class="step-item">
+                    <h4>Uzantıyı tıkla</h4>
+                    <p>Tarayıcı araç çubuğundaki ASS Subtitle Player simgesine tıklayın.</p>
+                </div>
+                <div class="step-item">
+                    <h4>Altyazı yükle</h4>
+                    <p><strong>“📁 Altyazı seç”</strong> ile dosya yükleyin veya doğrudan videonun üzerine sürükleyin.</p>
+                </div>
+                <div class="step-item">
+                    <h4>İnce ayar</h4>
+                    <p>Stil, senkronizasyon, çift dil veya arama sekmesinden altyazıyı bulun.</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- EKRAN GÖRÜNTÜLERİ -->
+    <section id="screenshots">
+        <div class="container">
+            <h2><i class="fas fa-images" style="color:#6d9eff; margin-right:12px;"></i> Ekran Görüntüleri</h2>
+            <div class="screenshot-grid">
+                <div class="screenshot-card">
+                    <img src="https://addons.mozilla.org/user-media/previews/full/368/368731.png?modified=1777506310" alt="Altyazı görünümü — özelleştirilmiş stil" />
+                    <div class="label"><i class="fas fa-film"></i> Altyazı görünümü — özelleştirilmiş stil</div>
+                </div>
+                <div class="screenshot-card">
+                    <img src="https://addons.mozilla.org/user-media/previews/thumbs/368/368730.jpg?modified=1777506310" alt="Uzantı paneli — ayarlar ve sekmeler" />
+                    <div class="label"><i class="fas fa-cog"></i> Kontrol paneli — tüm ayarlar tek yerde</div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- İNDİR / MAĞAZA -->
+    <section id="download">
+        <div class="container" style="text-align:center;">
+            <h2><i class="fas fa-download" style="color:#6d9eff; margin-right:12px;"></i> Hemen Yükleyin</h2>
+            <p style="max-width:600px; margin:0 auto 24px; color:#b0c5db;">
+                Ücretsiz ve açık kaynak. Firefox mağazasından direkt olarak kurabilir veya Chrome için GitHub üzerinden ZIP olarak indirebilirsiniz.
+            </p>
+            <div class="store-badges" style="justify-content:center;">
+                <a href="https://addons.mozilla.org/firefox/addon/ass-subtitle-player/" target="_blank" class="store-badge">
+                    <i class="fab fa-firefox-browser"></i> Firefox Eklentisi
+                </a>
+                <a href="https://github.com/KerimDemirkaynak/ASS-Subtitle-Player/tree/main" target="_blank" class="store-badge">
+                    <i class="fab fa-github"></i> Chrome İçin ZIP İndir
+                </a>
+            </div>
+            <div style="margin-top:32px; background:#131c26; padding:24px; border-radius:20px; border:1px solid #23303d; max-width:700px; margin-left:auto; margin-right:auto; text-align:left;">
+                <p style="font-size:0.95rem; color:#b0c5db;">
+                    <strong><i class="fas fa-shield-alt" style="color:#6d9eff;"></i> İzin Notu:</strong><br />
+                    • <code>activeTab</code> &amp; <code>scripting</code> — altyazıları video üzerinde göstermek için.<br />
+                    • <code>storage</code> &amp; <code>unlimitedStorage</code> — site profilleri, tercihler ve son yüklenen altyazıları hatırlamak için.
+                </p>
+            </div>
+        </div>
+    </section>
+
+    <!-- FOOTER -->
+    <footer>
+        <div class="container">
+            <p>
+                ASS Subtitle Player — Web videoları için profesyonel altyazı deneyimi.<br />
+                <a href="https://addons.mozilla.org/firefox/addon/ass-subtitle-player/" target="_blank">Firefox Mağaza</a> ·
+                <a href="https://github.com/KerimDemirkaynak/ASS-Subtitle-Player/tree/main" target="_blank">Chrome (GitHub)</a>
+            </p>
+            <p style="margin-top:12px; font-size:0.85rem; color:#6f88a0;">
+                © 2026 · Türkçe &amp; İngilizce destekli · Tüm hakları saklı değildir.
+            </p>
+        </div>
+    </footer>
+</body>
+</html>
