@@ -1,0 +1,437 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Subtitle Player</title>
+<style>
+    :root {
+        --bg: #000000;
+        --bg-2: #0a0a0a;
+        --panel: #1c1c1e;
+        --panel-2: #232325;
+        --line: #2c2c2e;
+        --text: #f0f0f0;
+        --muted: #8d8d92;
+        --accent: #ffb300;
+        --accent-soft: rgba(255,179,0,0.12);
+        --green: #2e7d32;
+        --red: #d32f2f;
+        --blue: #1976d2;
+        --radius: 11px;
+        --radius-sm: 7px;
+    }
+    * { box-sizing: border-box; }
+
+    body {
+        font-family: -apple-system, 'Segoe UI', Roboto, sans-serif;
+        background: var(--bg);
+        color: var(--text); 
+        margin: 0 auto; 
+        padding: 9px;
+        width: 310px;
+        height: 550px;
+        display: flex; 
+        flex-direction: column; 
+        gap: 6px;
+        font-size: 12px;
+        overflow: hidden;
+    }
+    
+    /* MOBILE SEPARATION */
+    @media (pointer: coarse) {
+        body {
+            width: 100%;
+            height: auto;
+            max-width: 100vw;
+            min-height: 300px;
+            max-height: 100vh;
+            overflow-y: auto;
+        }
+    }
+    
+    .header-row { display:flex; align-items:center; justify-content:space-between; flex-shrink: 0; }
+    h3 { margin: 0; font-size: 13.5px; font-weight: 700; display:flex; align-items:center; gap:5px; letter-spacing:.2px; }
+    .lang-switch { display:flex; background: var(--panel-2); border-radius: 20px; padding: 2px; gap:2px; }
+    .lang-btn { background: transparent; color: var(--muted); border:none; padding: 3px 9px; border-radius: 18px; font-size: 10px; font-weight: 700; cursor:pointer; transition: .15s; }
+    .lang-btn.active { background: var(--accent); color: #1a1200; }
+
+    .row { display: flex; justify-content: space-between; align-items: center; gap:8px; flex-shrink: 0; }
+    .switch { position: relative; display: inline-block; width: 34px; height: 19px; flex-shrink:0; }
+    .switch input { opacity: 0; width: 0; height: 0; }
+    .slider-toggle { position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background-color: #3a3a3c; transition: .15s; border-radius: 19px; }
+    .slider-toggle:before { position: absolute; content: ""; height: 13px; width: 13px; left: 3px; bottom: 3px; background-color: white; transition: .15s; border-radius: 50%; }
+    input:checked + .slider-toggle { background-color: var(--green); }
+    input:checked + .slider-toggle:before { transform: translateX(15px); }
+
+    button {
+        background-color: var(--blue); color: white; border: none; padding: 8px;
+        border-radius: var(--radius-sm); cursor: pointer; font-weight: 600;
+        text-align: center; font-size: 11.5px; transition: filter .12s, transform .05s;
+        font-family: inherit;
+        min-height: 36px;
+    }
+    button:hover { filter: brightness(1.12); }
+    button:active { transform: scale(0.98); }
+    .btn-block { width: 100%; flex-shrink: 0; }
+    .btn-amber { background: var(--accent); color: #1a1200; }
+    .btn-grey  { background: #2e2e30; color: #e2e2e2; }
+    .btn-row { display:flex; gap:5px; }
+    .btn-row button { flex:1; }
+    .file-label { background-color: #c45120; }
+
+    .tabs { display:flex; gap:1px; border-bottom: 1px solid var(--line); flex-shrink: 0; overflow-x: auto; }
+    .tabs::-webkit-scrollbar { display: none; }
+    .tab-btn {
+        flex:1; background: transparent; color: var(--muted); padding:7px 1px;
+        font-size: 10px; border-radius: 0; font-weight: 600; border-bottom: 2px solid transparent;
+        white-space: nowrap; min-width: 0;
+    }
+    .tab-btn:hover { filter:none; color: var(--text); }
+    .tab-btn.active { color: var(--accent); border-bottom: 2px solid var(--accent); }
+    
+    .tab-panel { 
+        display:none; 
+        flex-direction:column; 
+        gap:8px; 
+        flex: 1;
+        min-height: 0;
+        overflow-y: auto; 
+        padding-right: 4px;
+        -webkit-overflow-scrolling: touch;
+    }
+    .tab-panel.active { display:flex; }
+
+    /* MOBILE SEPARATION for tabs */
+    @media (pointer: coarse) {
+        .tab-panel {
+            overflow-y: visible;
+            flex: none;
+        }
+    }
+    
+    .tab-panel::-webkit-scrollbar { width: 4px; }
+    .tab-panel::-webkit-scrollbar-track { background: transparent; }
+    .tab-panel::-webkit-scrollbar-thumb { background: var(--line); border-radius: 4px; }
+
+    .card { background: var(--panel); padding: 9px 10px; border-radius: var(--radius); display:flex; flex-direction:column; gap:7px; border: 1px solid var(--line); }
+    .card label { font-size: 11px; display: flex; justify-content: space-between; color: var(--muted); }
+    .label-only { font-size:11px; color:var(--muted); font-weight:600; }
+
+    input[type=range] { width: 100%; cursor: pointer; accent-color: var(--accent); height:14px; }
+    input[type=color] { width: 30px; height: 22px; border:none; padding:0; background:none; cursor:pointer; border-radius:5px; }
+    select, input[type=text], input[type=number] {
+        background: var(--panel-2); color: var(--text); border: 1px solid var(--line);
+        border-radius: var(--radius-sm); padding: 6px; font-size: 11.5px; width: 100%;
+        font-family: inherit;
+    }
+    select:focus, input:focus { outline: 1px solid var(--accent); }
+    .inline-pair { display:flex; gap:5px; align-items:center; }
+    .inline-pair input[type=number] { width: 56px; flex-shrink:0; }
+    .inline-pair select { flex:1; }
+
+    .timecode { font-family: 'SF Mono', Consolas, monospace; font-size: 14px; text-align:center; color: var(--accent); background:var(--panel-2); border-radius: var(--radius-sm); padding:5px; font-weight:700; letter-spacing:.5px; }
+
+    .search-result { background: var(--panel-2); border-radius: var(--radius-sm); padding:7px; display:flex; flex-direction:column; gap:4px; font-size:10.5px; border:1px solid var(--line); }
+    .search-result .meta { color: var(--muted); }
+    .search-list { max-height: 220px; overflow-y:auto; display:flex; flex-direction:column; gap:6px; }
+    .hint { font-size: 10px; color: var(--muted); line-height:1.4; }
+    .shortcut-row { display:flex; justify-content:space-between; align-items:center; font-size:11px; padding:4px 0; border-bottom: 1px solid var(--line); }
+    .shortcut-row:last-of-type { border-bottom:none; }
+    .kbd { background:#000; border:1px solid var(--line); border-radius: 5px; padding:2px 7px; font-family:monospace; font-size:10px; color:#ddd; }
+    .status { font-size: 10.5px; text-align:center; color: var(--muted); min-height:13px; }
+
+</style>
+</head>
+<body>
+    <div class="header-row">
+        <h3>🎬 <span data-i18n="ext_title">Subtitle Player</span></h3>
+        <div class="lang-switch" id="lang-switch">
+            <button class="lang-btn" data-lang="en">EN</button>
+            <button class="lang-btn" data-lang="tr">TR</button>
+        </div>
+    </div>
+
+    <div class="row">
+        <span data-i18n="enable_extension">Enable extension</span>
+        <label class="switch">
+            <input type="checkbox" id="toggle-extension" checked>
+            <span class="slider-toggle"></span>
+        </label>
+    </div>
+
+    <button id="upload-btn" class="btn-block file-label">📁 <span data-i18n="upload_primary">Select subtitle (.ass, .srt)</span></button>
+    <button id="last-sub-btn" class="btn-block btn-grey">🕓 <span data-i18n="load_last_primary">Load last subtitle</span></button>
+
+    <div class="tabs">
+        <button class="tab-btn active" data-tab="stil" data-i18n="tab_style">Style</button>
+        <button class="tab-btn" data-tab="senkron" data-i18n="tab_sync">Sync</button>
+        <button class="tab-btn" data-tab="cift" data-i18n="tab_dual">Dual</button>
+        <button class="tab-btn" data-tab="ara" data-i18n="tab_search">Search</button>
+        <button class="tab-btn" data-tab="site" data-i18n="tab_site">Site</button>
+        <button class="tab-btn" data-tab="kisayol" data-i18n="tab_keys">Keys</button>
+    </div>
+
+    <div class="tab-panel active" id="tab-stil">
+        <div class="card">
+            <label><span data-i18n="size_label">Size</span><span id="size-value">100%</span></label>
+            <input type="range" id="size-slider" min="50" max="250" value="100">
+
+            <label><span data-i18n="opacity_label">Opacity</span><span id="opacity-value">100%</span></label>
+            <input type="range" id="opacity-slider" min="10" max="100" value="100">
+
+            <label><span data-i18n="edge_label">Distance from bottom</span><span id="edge-value">12%</span></label>
+            <input type="range" id="edge-slider" min="0" max="40" value="12">
+
+            <div class="row">
+                <span class="label-only" data-i18n="text_color_label">Text color</span>
+                <input type="color" id="color-picker" value="#ffffff">
+            </div>
+            <div class="row">
+                <span class="label-only" data-i18n="outline_color_label">Outline color</span>
+                <input type="color" id="border-color-picker" value="#000000">
+            </div>
+            <label><span data-i18n="outline_width_label">Outline width</span><span id="border-width-value">2px</span></label>
+            <input type="range" id="border-width-slider" min="0" max="6" value="2">
+
+            <span class="label-only" data-i18n="shadow_label">Shadow</span>
+            <select id="shadow-select">
+                <option value="none" data-i18n="shadow_none">None</option>
+                <option value="normal" selected data-i18n="shadow_normal">Normal</option>
+                <option value="strong" data-i18n="shadow_strong">Strong</option>
+            </select>
+
+            <span class="label-only" data-i18n="font_label">Font</span>
+            <select id="font-select">
+                <option value="sans-serif">Sans Serif</option>
+                <option value="Arial, sans-serif">Arial</option>
+                <option value="'Segoe UI', sans-serif">Segoe UI</option>
+                <option value="Verdana, sans-serif">Verdana</option>
+                <option value="Tahoma, sans-serif">Tahoma</option>
+                <option value="'Trebuchet MS', sans-serif">Trebuchet MS</option>
+                <option value="Georgia, serif">Georgia</option>
+                <option value="'Times New Roman', serif">Times New Roman</option>
+                <option value="'Courier New', monospace">Courier New</option>
+                <option value="Impact, sans-serif">Impact</option>
+                <option value="'Comic Sans MS', sans-serif">Comic Sans MS</option>
+                <option value="Roboto, sans-serif">Roboto</option>
+                <option value="'Open Sans', sans-serif">Open Sans</option>
+                <option value="'Noto Sans', sans-serif">Noto Sans</option>
+            </select>
+
+            <span class="label-only" data-i18n="ratio_label">Aspect ratio</span>
+            <select id="ratio-select">
+                <option value="auto" data-i18n="ratio_auto">Auto (recommended)</option>
+                <option value="16:9" data-i18n="ratio_169">16:9</option>
+                <option value="4:3" data-i18n="ratio_43">4:3</option>
+                <option value="vertical" data-i18n="ratio_vertical">Vertical (Shorts/TikTok)</option>
+            </select>
+
+            <div class="row" style="margin-top:2px;">
+                <span data-i18n="drag_mode_label">Drag-to-position mode</span>
+                <label class="switch">
+                    <input type="checkbox" id="drag-mode-toggle">
+                    <span class="slider-toggle"></span>
+                </label>
+            </div>
+            <div class="hint" data-i18n="drag_mode_hint">When enabled, click and drag the subtitle box anywhere on the video.</div>
+
+            <div class="row" style="margin-top:4px;">
+                <span data-i18n="position_top_label">Move to top (Toggle)</span>
+                <label class="switch">
+                    <input type="checkbox" id="position-top-toggle">
+                    <span class="slider-toggle"></span>
+                </label>
+            </div>
+        </div>
+    </div>
+
+    <div class="tab-panel" id="tab-senkron">
+        <div class="card">
+            <span class="label-only" data-i18n="delay_card_label">Real-time delay</span>
+            <div class="timecode" id="delay-display">0.00s</div>
+            <input type="range" id="delay-slider" min="-10" max="10" step="0.05" value="0">
+            <div class="btn-row">
+                <button id="delay-minus-1" class="btn-grey" data-i18n="delay_minus_1">−1s</button>
+                <button id="delay-minus-01" class="btn-grey" data-i18n="delay_minus_01">−0.1s</button>
+                <button id="delay-plus-01" class="btn-grey" data-i18n="delay_plus_01">+0.1s</button>
+                <button id="delay-plus-1" class="btn-grey" data-i18n="delay_plus_1">+1s</button>
+            </div>
+            <div class="btn-row">
+                <button id="delay-reset" class="btn-grey" data-i18n="reset_btn">Reset</button>
+                <button id="delay-bake" class="btn-amber" data-i18n="bake_btn">Apply permanently</button>
+            </div>
+            <div class="hint" data-i18n="bake_hint">"Apply permanently" bakes the current delay into every line and resets the counter.</div>
+        </div>
+
+        <div class="card">
+            <span class="label-only" data-i18n="frame_shift_label">Shift by frames</span>
+            <div class="inline-pair">
+                <input type="number" id="frame-shift-input" value="1" min="-9999" max="9999">
+                <select id="frame-shift-fps">
+                    <option value="23.976">23.976 fps</option>
+                    <option value="24">24 fps</option>
+                    <option value="25" selected>25 fps</option>
+                    <option value="29.97">29.97 fps</option>
+                    <option value="30">30 fps</option>
+                </select>
+                <button id="frame-shift-apply" class="btn-grey" data-i18n="shift_btn">Shift</button>
+            </div>
+        </div>
+
+        <div class="card">
+            <span class="label-only" data-i18n="fps_convert_label">Convert FPS (permanent, scales the whole timeline)</span>
+            <div class="inline-pair">
+                <select id="fps-from">
+                    <option value="23.976">23.976</option>
+                    <option value="24">24</option>
+                    <option value="25">25</option>
+                    <option value="29.97">29.97</option>
+                    <option value="30">30</option>
+                </select>
+                <span>→</span>
+                <select id="fps-to">
+                    <option value="23.976">23.976</option>
+                    <option value="24">24</option>
+                    <option value="25">25</option>
+                    <option value="29.97">29.97</option>
+                    <option value="30">30</option>
+                </select>
+                <button id="fps-convert-btn" class="btn-grey" data-i18n="apply_btn">Apply</button>
+            </div>
+        </div>
+
+        <div class="card">
+            <span class="label-only" data-i18n="profiles_label">Sync profiles</span>
+            <div class="btn-row">
+                <button id="save-tv" class="btn-grey" data-i18n="save_tv">Save TV</button>
+                <button id="load-tv" class="btn-grey" data-i18n="load_tv">Load TV</button>
+            </div>
+            <div class="btn-row">
+                <button id="save-bluray" class="btn-grey" data-i18n="save_bluray">Save Blu-ray</button>
+                <button id="load-bluray" class="btn-grey" data-i18n="load_bluray">Load Blu-ray</button>
+            </div>
+        </div>
+
+        <button id="autosync-btn" class="btn-block btn-amber">🎧 <span data-i18n="autosync_btn">Auto sync estimate (experimental)</span></button>
+        <div class="hint" data-i18n="autosync_hint">Compares speech onsets in the audio with subtitle timings to suggest a delay. May not work on DRM-protected streams (e.g. some Netflix titles).</div>
+    </div>
+
+    <div class="tab-panel" id="tab-cift">
+        <div class="card">
+            <div class="row">
+                <span data-i18n="dual_toggle_label">Dual subtitles (second language)</span>
+                <label class="switch">
+                    <input type="checkbox" id="dual-toggle">
+                    <span class="slider-toggle"></span>
+                </label>
+            </div>
+            <button id="upload-btn-2" class="btn-block file-label">📁 <span data-i18n="upload_secondary">Select secondary subtitle</span></button>
+            <button id="last-sub-btn-2" class="btn-block btn-grey">🕓 <span data-i18n="load_last_secondary">Load last secondary subtitle</span></button>
+
+            <label><span data-i18n="size2_label">Secondary size</span><span id="size2-value">80%</span></label>
+            <input type="range" id="size2-slider" min="50" max="250" value="80">
+
+            <label><span data-i18n="opacity2_label">Secondary opacity</span><span id="opacity2-value">100%</span></label>
+            <input type="range" id="opacity2-slider" min="10" max="100" value="100">
+
+            <div class="row">
+                <span class="label-only" data-i18n="color2_label">Secondary text color</span>
+                <input type="color" id="color2-picker" value="#ffd400">
+            </div>
+            <div class="row">
+                <span class="label-only" data-i18n="outline_color2_label">Secondary outline color</span>
+                <input type="color" id="border-color2-picker" value="#000000">
+            </div>
+            <label><span data-i18n="outline_width2_label">Secondary outline width</span><span id="border-width2-value">2px</span></label>
+            <input type="range" id="border-width2-slider" min="0" max="6" value="2">
+
+            <span class="label-only" data-i18n="shadow2_label">Secondary shadow</span>
+            <select id="shadow2-select">
+                <option value="none" data-i18n="shadow_none">None</option>
+                <option value="normal" selected data-i18n="shadow_normal">Normal</option>
+                <option value="strong" data-i18n="shadow_strong">Strong</option>
+            </select>
+
+            <span class="label-only" data-i18n="font2_label">Secondary font</span>
+            <select id="font2-select">
+                <option value="" data-i18n="font2_inherit">Same as primary</option>
+                <option value="sans-serif">Sans Serif</option>
+                <option value="Arial, sans-serif">Arial</option>
+                <option value="'Segoe UI', sans-serif">Segoe UI</option>
+                <option value="Verdana, sans-serif">Verdana</option>
+                <option value="Tahoma, sans-serif">Tahoma</option>
+                <option value="'Trebuchet MS', sans-serif">Trebuchet MS</option>
+                <option value="Georgia, serif">Georgia</option>
+                <option value="'Times New Roman', serif">Times New Roman</option>
+                <option value="Impact, sans-serif">Impact</option>
+                <option value="Roboto, sans-serif">Roboto</option>
+                <option value="'Open Sans', sans-serif">Open Sans</option>
+            </select>
+
+            <label><span data-i18n="dual_gap_label">Gap between lines</span><span id="dual-gap-value">8px</span></label>
+            <input type="range" id="dual-gap-slider" min="0" max="60" value="8">
+
+            <div class="hint" data-i18n="dual_hint">The secondary subtitle appears stacked just above the primary subtitle at the bottom.</div>
+        </div>
+    </div>
+
+    <div class="tab-panel" id="tab-ara">
+        <div class="card">
+            <span class="label-only" data-i18n="search_card_label">Search OpenSubtitles</span>
+            <input type="text" id="search-query" data-i18n-placeholder="search_placeholder" placeholder="Movie / show title…">
+            <select id="search-lang">
+                <option value="tr" data-i18n="lang_tr">Turkish</option>
+                <option value="en" selected data-i18n="lang_en">English</option>
+                <option value="ja" data-i18n="lang_ja">Japanese</option>
+                <option value="" data-i18n="lang_all">All languages</option>
+            </select>
+            <select id="search-target">
+                <option value="primary" data-i18n="search_target_primary">Target: primary subtitle</option>
+                <option value="secondary" data-i18n="search_target_secondary">Target: secondary subtitle</option>
+            </select>
+            <button id="search-btn" class="btn-block btn-amber" data-i18n="search_btn">Search</button>
+            <div class="status" id="search-status"></div>
+            <div class="search-list" id="search-results"></div>
+        </div>
+    </div>
+
+    <div class="tab-panel" id="tab-site">
+        <div class="card">
+            <div class="label-only"><span data-i18n="current_site_label">Current site:</span> <b id="current-host">-</b></div>
+            <div class="hint" data-i18n="site_hint">You can save the Style tab settings specifically for this site (e.g. 28px white on YouTube, 32px yellow on Crunchyroll).</div>
+            <div class="btn-row">
+                <button id="save-site-profile" class="btn-grey" data-i18n="save_site_btn">Save for this site</button>
+                <button id="reset-site-profile" class="btn-grey" data-i18n="reset_site_btn">Reset</button>
+            </div>
+            <div class="row" style="margin-top:4px;">
+                <span data-i18n="auto_restore_label">Auto-remember last subtitle</span>
+                <label class="switch">
+                    <input type="checkbox" id="auto-restore-toggle">
+                    <span class="slider-toggle"></span>
+                </label>
+            </div>
+        </div>
+
+        <div class="card" style="border-color: #5c1a1a;">
+            <button id="reset-all-settings" class="btn-block" style="background-color: var(--red);">⚠️ <span data-i18n="reset_all_settings">Tüm ayarları sıfırla</span></button>
+        </div>
+    </div>
+
+    <div class="tab-panel" id="tab-kisayol">
+        <div class="card">
+            <div class="shortcut-row"><span data-i18n="key_delay_small">Delay +0.1s / −0.1s</span><span class="kbd">Alt+→ / Alt+←</span></div>
+            <div class="shortcut-row"><span data-i18n="key_delay_big">Delay +1s / −1s</span><span class="kbd">Alt+Shift+→/←</span></div>
+            <div class="shortcut-row"><span data-i18n="key_delay_reset">Reset delay</span><span class="kbd">Alt+0</span></div>
+            <div class="shortcut-row"><span data-i18n="key_toggle_ext">Toggle extension</span><span class="kbd">Alt+E</span></div>
+            <div class="shortcut-row"><span data-i18n="key_toggle_dual">Toggle dual subtitle</span><span class="kbd">Alt+D</span></div>
+            <div class="shortcut-row"><span data-i18n="key_toggle_drag">Toggle drag-to-position mode</span><span class="kbd">Alt+P</span></div>
+            <div class="shortcut-row"><span data-i18n="key_toggle_top">Toggle position to top</span><span class="kbd">Alt+T</span></div>
+            <div class="hint" data-i18n="keys_hint" style="margin-top:4px;">Shortcuts are currently fixed and don't fire while typing in a text field.</div>
+        </div>
+    </div>
+
+    <script src="i18n.js"></script>
+    <script src="popup.js"></script>
+</body>
+</html>
