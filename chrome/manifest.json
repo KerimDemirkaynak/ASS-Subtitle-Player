@@ -1,0 +1,59 @@
+{
+  "manifest_version": 3,
+  "name": "ASS Subtitle Player",
+  "version": "2.1.1",
+  "description": "Play local/searched .ass, .ssa and .srt subtitles on YouTube, Netflix, Crunchyroll and any web video. Real-time sync, FPS conversion, dual subtitles, drag positioning, OpenSubtitles search and more.",
+  "permissions": [
+    "activeTab",
+    "scripting",
+    "storage",
+    "unlimitedStorage"
+  ],
+  "host_permissions": [
+    "<all_urls>"
+  ],
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "ass-subtitle-player@senindomainin.com",
+      "strict_min_version": "142.0",
+      "data_collection_permissions": {
+        "required": [
+          "none"
+        ]
+      }
+    }
+  },
+  "icons": {
+    "16": "icons/subtitle-svgrepo-com-16x16.png",
+    "32": "icons/subtitle-svgrepo-com-32x32.png",
+    "48": "icons/subtitle-svgrepo-com-48x48.png",
+    "128": "icons/subtitle-svgrepo-com-128x128.png"
+  },
+  "action": {
+    "default_icon": {
+      "16": "icons/subtitle-svgrepo-com-16x16.png",
+      "32": "icons/subtitle-svgrepo-com-32x32.png",
+      "48": "icons/subtitle-svgrepo-com-48x48.png",
+      "128": "icons/subtitle-svgrepo-com-128x128.png"
+    },
+    "default_popup": "popup.html"
+  },
+  "background": {
+    "scripts": [
+      "background.js"
+    ]
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "<all_urls>"
+      ],
+      "all_frames": true,
+      "js": [
+        "i18n.js",
+        "content.js"
+      ],
+      "run_at": "document_start"
+    }
+  ]
+}
