@@ -61,13 +61,19 @@ const I18N = {
         autosync_btn: "Auto sync estimate (experimental)",
         autosync_hint: "Compares speech onsets in the audio with subtitle timings to suggest a delay. May not work on DRM-protected streams (e.g. some Netflix titles).",
 
-        // Dual tab
         dual_toggle_label: "Dual subtitles (second language)",
         upload_secondary: "Select secondary subtitle",
         load_last_secondary: "Load last secondary subtitle",
         size2_label: "Secondary size",
+        opacity2_label: "Secondary opacity",
         color2_label: "Secondary text color",
-        dual_hint: "The secondary subtitle appears near the top of the video, the primary one at the bottom.",
+        outline_color2_label: "Secondary outline color",
+        outline_width2_label: "Secondary outline width",
+        shadow2_label: "Secondary shadow",
+        font2_label: "Secondary font",
+        font2_inherit: "Same as primary",
+        dual_gap_label: "Gap between lines",
+        dual_hint: "The secondary subtitle appears stacked just above the primary subtitle at the bottom.",
 
         // Search tab
         search_card_label: "Search OpenSubtitles",
@@ -123,7 +129,13 @@ const I18N = {
         autosync_apply: "Apply",
         autosync_close: "Close",
         reset_all_settings: "Reset all settings",
-        reset_all_confirm: "Are you sure you want to reset all extension settings to their defaults? This will reload the extension."
+        reset_all_confirm: "Are you sure you want to reset all extension settings to their defaults? This will reload the extension.",
+        
+        // Custom additions
+        toast_sub_loaded: "Subtitle successfully loaded!",
+        toast_sub_loaded_sec: "Secondary subtitle loaded!",
+        position_top_label: "Move to top (Toggle)",
+        key_toggle_top: "Toggle position to top"
     },
     tr: {
         ext_title: "Subtitle Player",
@@ -181,8 +193,15 @@ const I18N = {
         upload_secondary: "İkincil altyazı seç",
         load_last_secondary: "Son ikincil altyazıyı yükle",
         size2_label: "İkincil boyut",
+        opacity2_label: "İkincil şeffaflık",
         color2_label: "İkincil yazı rengi",
-        dual_hint: "İkincil altyazı ekranın üst kısmında, birincil ise alt kısımda gösterilir.",
+        outline_color2_label: "İkincil kenarlık rengi",
+        outline_width2_label: "İkincil kenarlık kalınlığı",
+        shadow2_label: "İkincil gölge",
+        font2_label: "İkincil yazı tipi",
+        font2_inherit: "Birincil ile aynı",
+        dual_gap_label: "Satırlar arası boşluk",
+        dual_hint: "İkincil altyazı, birincil altyazının hemen üstünde (alt kısımda) üst üste gösterilir.",
 
         search_card_label: "OpenSubtitles'da ara",
         search_placeholder: "Dizi / film adı…",
@@ -234,7 +253,13 @@ const I18N = {
         autosync_apply: "Uygula",
         autosync_close: "Kapat",
         reset_all_settings: "Tüm ayarları sıfırla",
-        reset_all_confirm: "Eklentinin tüm ayarlarını varsayılana döndürmek istediğinize emin misiniz? Bu işlem eklentiyi yeniden başlatacaktır."
+        reset_all_confirm: "Eklentinin tüm ayarlarını varsayılana döndürmek istediğinize emin misiniz? Bu işlem eklentiyi yeniden başlatacaktır.",
+        
+        // Custom additions
+        toast_sub_loaded: "Altyazı başarıyla eklendi!",
+        toast_sub_loaded_sec: "İkincil altyazı eklendi!",
+        position_top_label: "Üste taşı (Aç/Kapat)",
+        key_toggle_top: "Konumu üste/alta değiştir"
     }
 };
 

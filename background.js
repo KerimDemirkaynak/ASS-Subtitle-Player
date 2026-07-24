@@ -1,20 +1,5 @@
 // =========================================================================
 // ASS Subtitle Player - background.js (MV3 service worker)
-// Tüm OpenSubtitles.com API trafiği burada yapılır, çünkü extension'ın
-// arka plan context'i CORS kısıtlamasına tabi değildir (content script veya
-// sayfa içinden yapılan fetch çoğu zaman CORS'a çarpar).
-//
-// API tüketicisi (OpenSubtitles.com developer portalında kayıtlı):
-//   App adı : Hiabums
-//   Açıklama: "Hiç bişey yok."
-//   Durum   : Under dev = true, Allow anonymous = true
-// "Allow anonymous: true" sayesinde login/JWT akışına gerek yok, sadece
-// Api-Key header'ı ile arama ve indirme yapılabiliyor.
-//
-// NOT: Bu key client-side kodun içinde gönderiliyor; extension'ı paketten
-// (crx/xpi) çıkaran herkes key'i görebilir. Kişisel/dev kullanım için
-// sorun değil, ama public store'a yayınlarsan rate-limit/abuse riskine
-// karşı bir proxy sunucusu üzerinden geçirmen daha güvenli olur.
 // =========================================================================
 
 const OS_API_KEY = "jKrCXu3qO8z7OSYtS1LE1FxuF0GSPisC";
@@ -39,7 +24,6 @@ async function searchSubtitles(query, lang) {
     const json = await res.json();
     const items = Array.isArray(json.data) ? json.data : [];
 
-    // Sadece arayüzde göstereceğimiz alanları sade bir şekille çıkar.
     return items.slice(0, 15).map(item => {
         const attr = item.attributes || {};
         const file = (attr.files && attr.files[0]) || {};
@@ -74,7 +58,7 @@ async function downloadSubtitle(fileId) {
     }
     const json = await res.json();
     if (!json.link) {
-        throw new Error(json.message || "Could not get a download link (the anonymous daily download quota may be exhausted).");
+        throw new Error(json.message || "Could not get a download link.");
     }
 
     const fileRes = await fetch(json.link);
@@ -90,7 +74,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         searchSubtitles(request.query, request.lang)
             .then(results => sendResponse({ ok: true, results }))
             .catch(err => sendResponse({ ok: false, error: err.message }));
-        return true; // keep the message channel open for the async sendResponse
+        return true; 
     }
 
     if (request.type === "OS_DOWNLOAD") {

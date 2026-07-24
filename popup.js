@@ -2,7 +2,6 @@ document.addEventListener("DOMContentLoaded", () => {
     const $ = (id) => document.getElementById(id);
     let currentLang = "en";
 
-    // ---- i18n --------------------------------------------------------------
     function applyI18n(lang) {
         document.querySelectorAll("[data-i18n]").forEach(el => {
             el.textContent = i18nText(el.getAttribute("data-i18n"), lang);
@@ -24,7 +23,6 @@ document.addEventListener("DOMContentLoaded", () => {
         });
     });
 
-    // ---- Sekme geçişi --------------------------------------------------------
     document.querySelectorAll(".tab-btn").forEach(btn => {
         btn.addEventListener("click", () => {
             document.querySelectorAll(".tab-btn").forEach(b => b.classList.remove("active"));
@@ -34,7 +32,6 @@ document.addEventListener("DOMContentLoaded", () => {
         });
     });
 
-    // ---- Yardımcılar ----------------------------------------------------------
     function broadcastMessage(msg) {
         chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
             if (tabs[0]) chrome.tabs.sendMessage(tabs[0].id, msg, { frameId: undefined }).catch(() => {});
@@ -50,11 +47,11 @@ document.addEventListener("DOMContentLoaded", () => {
         broadcastMessage({ type: "STYLE_UPDATE", patch });
     }
 
-    // ---- Ayarları yükle ---------------------------------------------------
     const STORAGE_KEYS = [
         "uiLang","isEnabled","aspectMode","subSize","subOpacity","subColor","borderColor",
         "borderWidth","shadowLevel","subFont","edgeBottom","delaySeconds","dualEnabled",
-        "subColor2","subSize2","autoRestoreLastSubtitle","syncProfiles","siteProfiles"
+        "subColor2","subSize2","subOpacity2","subFont2","borderColor2","borderWidth2",
+        "shadowLevel2","dualGap","autoRestoreLastSubtitle","syncProfiles","siteProfiles","positionTop"
     ];
 
     chrome.storage.local.get(STORAGE_KEYS, (data) => {
@@ -74,8 +71,15 @@ document.addEventListener("DOMContentLoaded", () => {
         if (data.delaySeconds !== undefined) updateDelayUI(data.delaySeconds);
         if (data.dualEnabled !== undefined) $("dual-toggle").checked = data.dualEnabled;
         if (data.subSize2 !== undefined) { $("size2-slider").value = data.subSize2; $("size2-value").innerText = data.subSize2 + "%"; }
+        if (data.subOpacity2 !== undefined) { $("opacity2-slider").value = data.subOpacity2; $("opacity2-value").innerText = data.subOpacity2 + "%"; }
         if (data.subColor2 !== undefined) $("color2-picker").value = data.subColor2;
+        if (data.borderColor2 !== undefined) $("border-color2-picker").value = data.borderColor2;
+        if (data.borderWidth2 !== undefined) { $("border-width2-slider").value = data.borderWidth2; $("border-width2-value").innerText = data.borderWidth2 + "px"; }
+        if (data.shadowLevel2 !== undefined) $("shadow2-select").value = data.shadowLevel2;
+        if (data.subFont2 !== undefined) $("font2-select").value = data.subFont2;
+        if (data.dualGap !== undefined) { $("dual-gap-slider").value = data.dualGap; $("dual-gap-value").innerText = data.dualGap + "px"; }
         if (data.autoRestoreLastSubtitle !== undefined) $("auto-restore-toggle").checked = data.autoRestoreLastSubtitle;
+        if (data.positionTop !== undefined) $("position-top-toggle").checked = data.positionTop;
     });
 
     getActiveTab((tab) => {
@@ -90,7 +94,6 @@ document.addEventListener("DOMContentLoaded", () => {
         $("delay-display").innerText = (value >= 0 ? "+" : "") + value.toFixed(2) + "s";
     }
 
-    // ---- Üst kontroller ------------------------------------------------------
     $("toggle-extension").addEventListener("change", (e) => {
         chrome.storage.local.set({ isEnabled: e.target.checked });
         broadcastMessage({ type: "TOGGLE_EXTENSION", isEnabled: e.target.checked });
@@ -113,7 +116,6 @@ document.addEventListener("DOMContentLoaded", () => {
         window.close();
     });
 
-    // ---- STİL sekmesi -------------------------------------------------------
     $("size-slider").addEventListener("input", (e) => {
         $("size-value").innerText = e.target.value + "%";
         saveAndBroadcastStyle({ subSize: Number(e.target.value) });
@@ -142,8 +144,11 @@ document.addEventListener("DOMContentLoaded", () => {
         chrome.storage.local.set({ dragMode: e.target.checked });
         broadcastMessage({ type: "TOGGLE_DRAG_MODE", dragMode: e.target.checked });
     });
+    $("position-top-toggle").addEventListener("change", (e) => {
+        chrome.storage.local.set({ positionTop: e.target.checked });
+        saveAndBroadcastStyle({ positionTop: e.target.checked });
+    });
 
-    // ---- SENKRON sekmesi -----------------------------------------------------
     $("delay-slider").addEventListener("input", (e) => {
         const v = Number(e.target.value);
         updateDelayUI(v);
@@ -218,7 +223,6 @@ document.addEventListener("DOMContentLoaded", () => {
         if (request.type === "DELAY_CHANGED") updateDelayUI(request.value);
     });
 
-    // ---- ÇİFT DİL sekmesi -----------------------------------------------------
     $("dual-toggle").addEventListener("change", (e) => {
         chrome.storage.local.set({ dualEnabled: e.target.checked });
         broadcastMessage({ type: "TOGGLE_DUAL", dualEnabled: e.target.checked });
@@ -227,16 +231,29 @@ document.addEventListener("DOMContentLoaded", () => {
         $("size2-value").innerText = e.target.value + "%";
         saveAndBroadcastStyle({ subSize2: Number(e.target.value) });
     });
+    $("opacity2-slider").addEventListener("input", (e) => {
+        $("opacity2-value").innerText = e.target.value + "%";
+        saveAndBroadcastStyle({ subOpacity2: Number(e.target.value) });
+    });
     $("color2-picker").addEventListener("input", (e) => saveAndBroadcastStyle({ subColor2: e.target.value }));
+    $("border-color2-picker").addEventListener("input", (e) => saveAndBroadcastStyle({ borderColor2: e.target.value }));
+    $("border-width2-slider").addEventListener("input", (e) => {
+        $("border-width2-value").innerText = e.target.value + "px";
+        saveAndBroadcastStyle({ borderWidth2: Number(e.target.value) });
+    });
+    $("shadow2-select").addEventListener("change", (e) => saveAndBroadcastStyle({ shadowLevel2: e.target.value }));
+    $("font2-select").addEventListener("change", (e) => saveAndBroadcastStyle({ subFont2: e.target.value }));
+    $("dual-gap-slider").addEventListener("input", (e) => {
+        $("dual-gap-value").innerText = e.target.value + "px";
+        saveAndBroadcastStyle({ dualGap: Number(e.target.value) });
+    });
 
-    // ---- ARA sekmesi (OpenSubtitles) -------------------------------------------
     $("search-btn").addEventListener("click", () => {
         const query = $("search-query").value.trim();
         const lang = $("search-lang").value;
         const statusEl = $("search-status");
         const resultsEl = $("search-results");
         
-        // innerHTML uyarısı almamak için güvenli temizleme:
         resultsEl.textContent = ""; 
         
         if (!query) { statusEl.innerText = i18nText("search_enter_title", currentLang); return; }
@@ -261,17 +278,11 @@ document.addEventListener("DOMContentLoaded", () => {
         const card = document.createElement("div");
         card.className = "search-result";
 
-        // innerHTML yerine güvenli DOM manipülasyonu:
         const titleLine = document.createElement("div");
-        
         const boldText = document.createElement("b");
         boldText.textContent = r.title || r.file_name || "";
         titleLine.appendChild(boldText);
-        
-        if (r.year) {
-            titleLine.appendChild(document.createTextNode(` (${r.year})`));
-        }
-        
+        if (r.year) titleLine.appendChild(document.createTextNode(` (${r.year})`));
         card.appendChild(titleLine);
 
         const metaLine = document.createElement("div");
@@ -302,7 +313,6 @@ document.addEventListener("DOMContentLoaded", () => {
         return card;
     }
 
-    // ---- SİTE sekmesi --------------------------------------------------------
     $("save-site-profile").addEventListener("click", () => {
         getActiveTab((tab) => {
             let host;
@@ -334,7 +344,6 @@ document.addEventListener("DOMContentLoaded", () => {
         chrome.storage.local.set({ autoRestoreLastSubtitle: e.target.checked });
     });
 
-    // ---- TÜM AYARLARI SIFIRLAMA ----
     $("reset-all-settings").addEventListener("click", () => {
         if (confirm(i18nText("reset_all_confirm", currentLang))) {
             chrome.storage.local.clear(() => {

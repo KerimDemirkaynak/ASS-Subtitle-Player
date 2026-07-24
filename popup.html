@@ -22,27 +22,41 @@
         --radius-sm: 7px;
     }
     * { box-sizing: border-box; }
+
     body {
         font-family: -apple-system, 'Segoe UI', Roboto, sans-serif;
         background: var(--bg);
         color: var(--text); 
         margin: 0 auto; 
-        padding: 11px;
-        width: 100%; 
-        max-width: 500px;
-        min-width: 300px;
+        padding: 9px;
+        width: 310px;
+        height: 550px;
         display: flex; 
         flex-direction: column; 
-        gap: 8px;
+        gap: 6px;
         font-size: 12px;
+        overflow: hidden;
     }
-    .header-row { display:flex; align-items:center; justify-content:space-between; }
+    
+    /* MOBILE SEPARATION */
+    @media (pointer: coarse) {
+        body {
+            width: 100%;
+            height: auto;
+            max-width: 100vw;
+            min-height: 300px;
+            max-height: 100vh;
+            overflow-y: auto;
+        }
+    }
+    
+    .header-row { display:flex; align-items:center; justify-content:space-between; flex-shrink: 0; }
     h3 { margin: 0; font-size: 13.5px; font-weight: 700; display:flex; align-items:center; gap:5px; letter-spacing:.2px; }
     .lang-switch { display:flex; background: var(--panel-2); border-radius: 20px; padding: 2px; gap:2px; }
     .lang-btn { background: transparent; color: var(--muted); border:none; padding: 3px 9px; border-radius: 18px; font-size: 10px; font-weight: 700; cursor:pointer; transition: .15s; }
     .lang-btn.active { background: var(--accent); color: #1a1200; }
 
-    .row { display: flex; justify-content: space-between; align-items: center; gap:8px; }
+    .row { display: flex; justify-content: space-between; align-items: center; gap:8px; flex-shrink: 0; }
     .switch { position: relative; display: inline-block; width: 34px; height: 19px; flex-shrink:0; }
     .switch input { opacity: 0; width: 0; height: 0; }
     .slider-toggle { position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background-color: #3a3a3c; transition: .15s; border-radius: 19px; }
@@ -55,25 +69,50 @@
         border-radius: var(--radius-sm); cursor: pointer; font-weight: 600;
         text-align: center; font-size: 11.5px; transition: filter .12s, transform .05s;
         font-family: inherit;
+        min-height: 36px;
     }
     button:hover { filter: brightness(1.12); }
     button:active { transform: scale(0.98); }
-    .btn-block { width: 100%; }
+    .btn-block { width: 100%; flex-shrink: 0; }
     .btn-amber { background: var(--accent); color: #1a1200; }
     .btn-grey  { background: #2e2e30; color: #e2e2e2; }
     .btn-row { display:flex; gap:5px; }
     .btn-row button { flex:1; }
     .file-label { background-color: #c45120; }
 
-    .tabs { display:flex; gap:1px; border-bottom: 1px solid var(--line); }
+    .tabs { display:flex; gap:1px; border-bottom: 1px solid var(--line); flex-shrink: 0; overflow-x: auto; }
+    .tabs::-webkit-scrollbar { display: none; }
     .tab-btn {
         flex:1; background: transparent; color: var(--muted); padding:7px 1px;
         font-size: 10px; border-radius: 0; font-weight: 600; border-bottom: 2px solid transparent;
+        white-space: nowrap; min-width: 0;
     }
     .tab-btn:hover { filter:none; color: var(--text); }
     .tab-btn.active { color: var(--accent); border-bottom: 2px solid var(--accent); }
-    .tab-panel { display:none; flex-direction:column; gap:8px; }
+    
+    .tab-panel { 
+        display:none; 
+        flex-direction:column; 
+        gap:8px; 
+        flex: 1;
+        min-height: 0;
+        overflow-y: auto; 
+        padding-right: 4px;
+        -webkit-overflow-scrolling: touch;
+    }
     .tab-panel.active { display:flex; }
+
+    /* MOBILE SEPARATION for tabs */
+    @media (pointer: coarse) {
+        .tab-panel {
+            overflow-y: visible;
+            flex: none;
+        }
+    }
+    
+    .tab-panel::-webkit-scrollbar { width: 4px; }
+    .tab-panel::-webkit-scrollbar-track { background: transparent; }
+    .tab-panel::-webkit-scrollbar-thumb { background: var(--line); border-radius: 4px; }
 
     .card { background: var(--panel); padding: 9px 10px; border-radius: var(--radius); display:flex; flex-direction:column; gap:7px; border: 1px solid var(--line); }
     .card label { font-size: 11px; display: flex; justify-content: space-between; color: var(--muted); }
@@ -101,6 +140,7 @@
     .shortcut-row:last-of-type { border-bottom:none; }
     .kbd { background:#000; border:1px solid var(--line); border-radius: 5px; padding:2px 7px; font-family:monospace; font-size:10px; color:#ddd; }
     .status { font-size: 10.5px; text-align:center; color: var(--muted); min-height:13px; }
+
 </style>
 </head>
 <body>
@@ -195,6 +235,14 @@
                 </label>
             </div>
             <div class="hint" data-i18n="drag_mode_hint">When enabled, click and drag the subtitle box anywhere on the video.</div>
+
+            <div class="row" style="margin-top:4px;">
+                <span data-i18n="position_top_label">Move to top (Toggle)</span>
+                <label class="switch">
+                    <input type="checkbox" id="position-top-toggle">
+                    <span class="slider-toggle"></span>
+                </label>
+            </div>
         </div>
     </div>
 
@@ -283,11 +331,48 @@
 
             <label><span data-i18n="size2_label">Secondary size</span><span id="size2-value">80%</span></label>
             <input type="range" id="size2-slider" min="50" max="250" value="80">
+
+            <label><span data-i18n="opacity2_label">Secondary opacity</span><span id="opacity2-value">100%</span></label>
+            <input type="range" id="opacity2-slider" min="10" max="100" value="100">
+
             <div class="row">
                 <span class="label-only" data-i18n="color2_label">Secondary text color</span>
                 <input type="color" id="color2-picker" value="#ffd400">
             </div>
-            <div class="hint" data-i18n="dual_hint">The secondary subtitle appears near the top of the video, the primary one at the bottom.</div>
+            <div class="row">
+                <span class="label-only" data-i18n="outline_color2_label">Secondary outline color</span>
+                <input type="color" id="border-color2-picker" value="#000000">
+            </div>
+            <label><span data-i18n="outline_width2_label">Secondary outline width</span><span id="border-width2-value">2px</span></label>
+            <input type="range" id="border-width2-slider" min="0" max="6" value="2">
+
+            <span class="label-only" data-i18n="shadow2_label">Secondary shadow</span>
+            <select id="shadow2-select">
+                <option value="none" data-i18n="shadow_none">None</option>
+                <option value="normal" selected data-i18n="shadow_normal">Normal</option>
+                <option value="strong" data-i18n="shadow_strong">Strong</option>
+            </select>
+
+            <span class="label-only" data-i18n="font2_label">Secondary font</span>
+            <select id="font2-select">
+                <option value="" data-i18n="font2_inherit">Same as primary</option>
+                <option value="sans-serif">Sans Serif</option>
+                <option value="Arial, sans-serif">Arial</option>
+                <option value="'Segoe UI', sans-serif">Segoe UI</option>
+                <option value="Verdana, sans-serif">Verdana</option>
+                <option value="Tahoma, sans-serif">Tahoma</option>
+                <option value="'Trebuchet MS', sans-serif">Trebuchet MS</option>
+                <option value="Georgia, serif">Georgia</option>
+                <option value="'Times New Roman', serif">Times New Roman</option>
+                <option value="Impact, sans-serif">Impact</option>
+                <option value="Roboto, sans-serif">Roboto</option>
+                <option value="'Open Sans', sans-serif">Open Sans</option>
+            </select>
+
+            <label><span data-i18n="dual_gap_label">Gap between lines</span><span id="dual-gap-value">8px</span></label>
+            <input type="range" id="dual-gap-slider" min="0" max="60" value="8">
+
+            <div class="hint" data-i18n="dual_hint">The secondary subtitle appears stacked just above the primary subtitle at the bottom.</div>
         </div>
     </div>
 
@@ -322,7 +407,7 @@
             <div class="row" style="margin-top:4px;">
                 <span data-i18n="auto_restore_label">Auto-remember last subtitle</span>
                 <label class="switch">
-                    <input type="checkbox" id="auto-restore-toggle" checked>
+                    <input type="checkbox" id="auto-restore-toggle">
                     <span class="slider-toggle"></span>
                 </label>
             </div>
@@ -341,6 +426,7 @@
             <div class="shortcut-row"><span data-i18n="key_toggle_ext">Toggle extension</span><span class="kbd">Alt+E</span></div>
             <div class="shortcut-row"><span data-i18n="key_toggle_dual">Toggle dual subtitle</span><span class="kbd">Alt+D</span></div>
             <div class="shortcut-row"><span data-i18n="key_toggle_drag">Toggle drag-to-position mode</span><span class="kbd">Alt+P</span></div>
+            <div class="shortcut-row"><span data-i18n="key_toggle_top">Toggle position to top</span><span class="kbd">Alt+T</span></div>
             <div class="hint" data-i18n="keys_hint" style="margin-top:4px;">Shortcuts are currently fixed and don't fire while typing in a text field.</div>
         </div>
     </div>

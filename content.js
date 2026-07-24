@@ -1,8 +1,7 @@
 // =========================================================================
-// ASS Subtitle Player - content.js (v2.1)
+// ASS Subtitle Player - content.js (v2.1.3 Stable Reset Fix)
 // =========================================================================
 
-// ---- Varsayılan ayarlar / Defaults ---------------------------------------
 const DEFAULTS = {
     isEnabled: true,
     aspectMode: "auto",      // 'auto' | '16:9' | '4:3' | 'vertical'
@@ -18,19 +17,24 @@ const DEFAULTS = {
     posOffsetY: 0,           // px
     dragMode: false,
     delaySeconds: 0,
-    dualEnabled: false,
+    dualEnabled: true,
     subColor2: "#ffd400",
     subSize2: 80,
-    autoRestoreLastSubtitle: true,
-    lastSubtitle: null,      // {name, ext, content}
+    subOpacity2: 100,        // % - secondary opacity
+    subFont2: "",            // empty = inherit primary font
+    borderColor2: "#000000",
+    borderWidth2: 2,         // px
+    shadowLevel2: "normal",  // 'none' | 'normal' | 'strong'
+    dualGap: 8,              // px - extra gap between primary and secondary
+    autoRestoreLastSubtitle: false,  // Default to false so switching videos doesn't auto play old subs
+    positionTop: false,
+    lastSubtitle: null,      
     lastSubtitle2: null,
     syncProfiles: { tv: null, bluray: null },
     siteProfiles: {},
     uiLang: "en"
 };
 
-// Ready-made style presets for popular sites (overridden by a saved
-// siteProfiles entry if the user has explicitly saved one for that host).
 const SITE_PRESETS = {
     "youtube.com":      { subSize: 100, subColor: "#ffffff", subFont: "Roboto, sans-serif", edgeBottom: 10 },
     "netflix.com":      { subSize: 100, subColor: "#ffffff", subFont: "sans-serif", edgeBottom: 12 },
@@ -42,16 +46,16 @@ const SITE_PRESETS = {
 let settings = JSON.parse(JSON.stringify(DEFAULTS));
 
 let activeVideo = null;
-let customSubContainer = null;   // primary subtitle box
-let customSubContainer2 = null;  // secondary (dual subtitle) box
+let customSubContainer = null;   
+let customSubContainer2 = null;  
 let parsedSubtitles = [];
 let parsedSubtitles2 = [];
 let syncAnimationId = null;
 let videoWatchTimer = null;
+let lastPrimaryRenderedHeight = 0; // Cache last known primary height for stable secondary positioning
 
 function tr(key, vars) { return i18nText(key, settings.uiLang, vars); }
 
-// ---- Ayarları yükle / Load settings --------------------------------------
 function loadSettings(callback) {
     chrome.storage.local.get(Object.keys(DEFAULTS), (data) => {
         settings = Object.assign({}, DEFAULTS, data);
@@ -78,7 +82,9 @@ chrome.storage.onChanged.addListener((changes, area) => {
         if (key in DEFAULTS) {
             settings[key] = changes[key].newValue;
             if (["subSize","subOpacity","subColor","borderColor","borderWidth",
-                 "shadowLevel","subFont","edgeBottom","aspectMode","subColor2","subSize2"].includes(key)) {
+                 "shadowLevel","subFont","edgeBottom","aspectMode","positionTop",
+                 "subColor2","subSize2","subOpacity2","subFont2","borderColor2",
+                 "borderWidth2","shadowLevel2","dualGap"].includes(key)) {
                 styleTouched = true;
             }
         }
@@ -88,7 +94,6 @@ chrome.storage.onChanged.addListener((changes, area) => {
 
 loadSettings();
 
-// ---- Mesaj dinleyici / message handler -----------------------------------
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     switch (request.type) {
         case "SHOW_PICKER_UI":
@@ -159,12 +164,6 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     }
 });
 
-// ---- Fullscreen desteği (JW Player vb. siteler için) ----------------------
-// Fullscreen API'de, fullscreen olan elementin DIŞINDAKİ her şey (document.body
-// dahil) tarayıcı tarafından render edilmez. Bu yüzden altyazı kutusunu her
-// zaman geçerli fullscreen elementinin İÇİNE taşımamız gerekiyor; aksi halde
-// JW Player gibi kendi wrapper'ını fullscreen yapan oynatıcılarda altyazı
-// görünmez olur.
 function getFullscreenElement() {
     return document.fullscreenElement || document.webkitFullscreenElement ||
            document.mozFullScreenElement || document.msFullscreenElement || null;
@@ -183,12 +182,69 @@ function ensureContainerParent(container) {
     document.addEventListener(evt, () => {
         ensureContainerParent(customSubContainer);
         ensureContainerParent(customSubContainer2);
+        const toast = document.getElementById("ass-ext-toast");
+        if (toast) ensureContainerParent(toast);
         updateSubStyle();
         updateSubStyle2();
     });
 });
 
-// ---- Dosya seçici / file picker panel --------------------------------------
+// ---- Toast: only show in the frame that actually owns the video ----
+function isMainVideoFrame() {
+    return !!document.querySelector("video");
+}
+
+function showToast(msg) {
+    // Guard: skip frames that have no video (avoids duplicates in sub-frames)
+    if (!isMainVideoFrame()) return;
+
+    let toast = document.getElementById("ass-ext-toast");
+    if (!toast) {
+        toast = document.createElement("div");
+        toast.id = "ass-ext-toast";
+        toast.style.cssText = `
+            position: fixed;
+            background: rgba(46, 125, 50, 0.95);
+            color: white;
+            padding: 10px 20px;
+            border-radius: 6px;
+            font-family: 'Segoe UI', sans-serif;
+            font-size: 13px;
+            font-weight: bold;
+            z-index: 2147483647;
+            opacity: 0;
+            transition: opacity 0.3s, transform 0.3s;
+            pointer-events: none;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.5);
+            border: 1px solid #388e3c;
+            text-align: center;
+        `;
+        document.body.appendChild(toast);
+    }
+    
+    ensureContainerParent(toast);
+    toast.innerText = msg;
+    
+    if (activeVideo) {
+        const rect = activeVideo.getBoundingClientRect();
+        const centerX = rect.left + rect.width / 2;
+        const topY = rect.top + rect.height * 0.15;
+        toast.style.left = `${centerX}px`;
+        toast.style.top = `${topY}px`;
+        toast.style.bottom = "auto";
+        toast.style.transform = "translate(-50%, -50%)";
+    } else {
+        toast.style.left = "50%";
+        toast.style.top = "auto";
+        toast.style.bottom = "80px";
+        toast.style.transform = "translateX(-50%)";
+    }
+
+    toast.style.opacity = "1";
+    if (toast.hideTimeout) clearTimeout(toast.hideTimeout);
+    toast.hideTimeout = setTimeout(() => { toast.style.opacity = "0"; }, 2500);
+}
+
 function injectFilePickerUI(target) {
     let existing = document.getElementById("ass-ext-floating-picker");
     if (existing) existing.remove();
@@ -247,18 +303,15 @@ function injectFilePickerUI(target) {
     container.appendChild(dropHint);
     container.appendChild(fileInput);
     container.appendChild(closeBtn);
-    // Seçici panel her zaman normal body üzerinde gösterilir (fullscreen'den
-    // çıkmadan dosya seçtirmek tarayıcıda genelde mümkün olmuyor zaten).
     document.body.appendChild(container);
 }
 
-// Sayfanın herhangi bir yerine altyazı dosyası sürükle-bırak desteği
 document.addEventListener("dragover", (e) => {
     if (document.querySelector("video")) e.preventDefault();
 });
 document.addEventListener("drop", (e) => {
     if (!document.querySelector("video")) return;
-    if (document.getElementById("ass-ext-floating-picker")) return; // panel kendi drop'unu yönetiyor
+    if (document.getElementById("ass-ext-floating-picker")) return; 
     const file = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
     if (!file) return;
     const ext = file.name.split(".").pop().toLowerCase();
@@ -269,7 +322,6 @@ document.addEventListener("drop", (e) => {
     reader.readAsText(file, ext === "srt" ? "utf-8" : "windows-1254");
 });
 
-// ---- Altyazı yükleme / ayrıştırma -----------------------------------------
 function loadSubtitleFromText(text, extension, name, target) {
     const subs = (extension === "srt") ? parseSRT(text) : parseASS(text);
     if (subs.length === 0) return;
@@ -278,11 +330,13 @@ function loadSubtitleFromText(text, extension, name, target) {
         parsedSubtitles2 = subs;
         settings.lastSubtitle2 = { name, ext: extension, content: text };
         chrome.storage.local.set({ lastSubtitle2: settings.lastSubtitle2 });
+        showToast(tr("toast_sub_loaded_sec"));
     } else {
         parsedSubtitles = subs;
         settings.delaySeconds = 0;
         settings.lastSubtitle = { name, ext: extension, content: text };
         chrome.storage.local.set({ lastSubtitle: settings.lastSubtitle });
+        showToast(tr("toast_sub_loaded"));
     }
 
     const video = getActiveVideo();
@@ -329,6 +383,7 @@ function parseASS(assText) {
             const parts = line.split(",");
             if (parts.length >= 10) {
                 let text = parts.slice(9).join(",");
+                // Convert ASS override tags and line-breaks to plain newlines (safe for textContent)
                 text = text.replace(/\{.*?\}/g, "").replace(/\\[Nn]/g, "\n").trim();
                 subs.push({ start: tToS(parts[1]), end: tToS(parts[2]), text: text });
             }
@@ -337,7 +392,6 @@ function parseASS(assText) {
     return subs;
 }
 
-// ---- Senkron: gecikme / kare-fps -------------------------------------------
 function adjustDelay(delta) {
     settings.delaySeconds = Math.round((settings.delaySeconds + delta) * 1000) / 1000;
     chrome.storage.local.set({ delaySeconds: settings.delaySeconds });
@@ -356,7 +410,7 @@ function bakeDelay() {
 
 function convertFps(fromFps, toFps) {
     if (!fromFps || !toFps || fromFps === toFps) return;
-    const factor = fromFps / toFps; // scales second-based timestamps (permanent, unlike the live delay)
+    const factor = fromFps / toFps; 
     parsedSubtitles.forEach(c => { c.start *= factor; c.end *= factor; });
     parsedSubtitles2.forEach(c => { c.start *= factor; c.end *= factor; });
 }
@@ -365,7 +419,6 @@ function broadcastDelay() {
     chrome.runtime.sendMessage({ type: "DELAY_CHANGED", value: settings.delaySeconds }).catch(() => {});
 }
 
-// ---- Klavye kısayolları / keyboard shortcuts -------------------------------
 window.addEventListener("keydown", (e) => {
     const tag = document.activeElement && document.activeElement.tagName;
     if (tag === "INPUT" || tag === "TEXTAREA" || (document.activeElement && document.activeElement.isContentEditable)) return;
@@ -378,10 +431,10 @@ window.addEventListener("keydown", (e) => {
         case "KeyE":       settings.isEnabled = !settings.isEnabled; chrome.storage.local.set({ isEnabled: settings.isEnabled }); e.preventDefault(); break;
         case "KeyD":       settings.dualEnabled = !settings.dualEnabled; chrome.storage.local.set({ dualEnabled: settings.dualEnabled }); e.preventDefault(); break;
         case "KeyP":       settings.dragMode = !settings.dragMode; updateSubStyle(); e.preventDefault(); break;
+        case "KeyT":       settings.positionTop = !settings.positionTop; chrome.storage.local.set({ positionTop: settings.positionTop }); updateSubStyle(); e.preventDefault(); break;
     }
 });
 
-// ---- Video tespiti (YouTube/Netflix SPA dahil) / video detection -----------
 function getActiveVideo() {
     const videos = Array.from(document.querySelectorAll("video"));
     if (videos.length === 0) return null;
@@ -394,14 +447,32 @@ function getActiveVideo() {
     return best || videos[0];
 }
 
+let lastPageUrl = location.href;
+
 function watchForVideoChanges() {
     if (videoWatchTimer) clearInterval(videoWatchTimer);
     videoWatchTimer = setInterval(() => {
         const v = getActiveVideo();
+        const currentUrl = location.href;
+
+        // SPA Navigation Fix: If URL changes (e.g. clicked a new YouTube video), clear subtitles
+        // if the user doesn't want them auto-restored. This is much safer than checking video.src.
+        if (currentUrl !== lastPageUrl) {
+            lastPageUrl = currentUrl;
+            if (!settings.autoRestoreLastSubtitle) {
+                parsedSubtitles = [];
+                parsedSubtitles2 = [];
+                if (customSubContainer) { customSubContainer.innerHTML = ""; customSubContainer.style.display = "none"; }
+                if (customSubContainer2) { customSubContainer2.innerHTML = ""; customSubContainer2.style.display = "none"; }
+            }
+        }
+
         if (v && v !== activeVideo) {
             activeVideo = v;
-            if (parsedSubtitles.length > 0 || settings.lastSubtitle) initContainer(v);
-            if (parsedSubtitles2.length > 0) initContainer2(v);
+            
+            if (parsedSubtitles.length > 0 || (settings.autoRestoreLastSubtitle && settings.lastSubtitle)) initContainer(v);
+            if (parsedSubtitles2.length > 0 || (settings.autoRestoreLastSubtitle && settings.lastSubtitle2)) initContainer2(v);
+            
             if (parsedSubtitles.length === 0 && settings.autoRestoreLastSubtitle && settings.lastSubtitle) {
                 restoreLastSubtitle("primary");
             }
@@ -423,7 +494,6 @@ function tryInitialAutoRestore() {
 }
 setTimeout(() => loadSettings(tryInitialAutoRestore), 600);
 
-// ---- Konteyner kurulumu / container setup ----------------------------------
 function initContainer(videoElement) {
     if (customSubContainer) customSubContainer.remove();
     customSubContainer = document.createElement("div");
@@ -448,6 +518,68 @@ function buildTextShadow(borderColor, borderWidth, shadowLevel) {
     return offsets.map(([x,y]) => `${x}px ${y}px ${shadowLevel === "strong" ? w : 1}px ${borderColor}`).join(", ");
 }
 
+// ---- Safe subtitle renderer (handles <i>, <b>, <u>, <font color>, \n) --------
+// Uses DOMParser so we never call innerHTML with untrusted content directly.
+const SAFE_INLINE_TAGS = new Set(["i", "b", "u", "em", "strong", "br", "font"]);
+function setSubText(container, text) {
+    container.textContent = ""; // clear safely
+    if (!text) return;
+
+    // Convert plain newlines to <br> so DOMParser sees them as breaks
+    const html = text.replace(/\n/g, "<br>");
+
+    const parser = new DOMParser();
+    const doc = parser.parseFromString(html, "text/html");
+
+    function importSafe(node) {
+        if (node.nodeType === Node.TEXT_NODE) {
+            return document.createTextNode(node.textContent);
+        }
+        if (node.nodeType === Node.ELEMENT_NODE) {
+            const tag = node.tagName.toLowerCase();
+            if (SAFE_INLINE_TAGS.has(tag)) {
+                const el = document.createElement(tag);
+                // Only allow the 'color' attribute on <font>
+                if (tag === "font" && node.getAttribute("color")) {
+                    el.setAttribute("color", node.getAttribute("color"));
+                }
+                node.childNodes.forEach(child => {
+                    const safe = importSafe(child);
+                    if (safe) el.appendChild(safe);
+                });
+                return el;
+            } else {
+                // Unknown/unsafe tag: keep its text children, drop the tag itself
+                const frag = document.createDocumentFragment();
+                node.childNodes.forEach(child => {
+                    const safe = importSafe(child);
+                    if (safe) frag.appendChild(safe);
+                });
+                return frag;
+            }
+        }
+        return null;
+    }
+
+    doc.body.childNodes.forEach(child => {
+        const safe = importSafe(child);
+        if (safe) container.appendChild(safe);
+    });
+}
+
+
+// ---- Mobile Detection & Font Support -------------------------------------
+const isMobile = /Mobi|Android|iPhone|iPad/i.test(navigator.userAgent);
+
+if (isMobile) {
+    // Inject Google Fonts on mobile so that font selections actually render differently 
+    // (since Android/iOS lack fonts like Arial, Tahoma, etc. by default).
+    const fontLink = document.createElement("link");
+    fontLink.rel = "stylesheet";
+    fontLink.href = "https://fonts.googleapis.com/css2?family=Roboto:wght@700&family=Open+Sans:wght@700&family=Noto+Sans:wght@700&display=swap";
+    document.head.appendChild(fontLink);
+}
+
 function computeBoxRect() {
     if (!activeVideo) return null;
     const rect = activeVideo.getBoundingClientRect();
@@ -464,12 +596,24 @@ function updateSubStyle() {
     if (!info) { customSubContainer.style.display = "none"; return; }
     const { rect, maxWidthRatio } = info;
 
-    const fontSize = `calc(clamp(14px, 3.2vw, 58px) * ${settings.subSize / 100})`;
-    const bottomPx = rect.top + rect.height * (1 - settings.edgeBottom / 100) - settings.posOffsetY;
+    // Mobile gets exactly the 2.1.1 styling (vw based), desktop gets the rect-based styling
+    const fontSize = isMobile
+        ? `calc(clamp(14px, 3.2vw, 58px) * ${settings.subSize / 100})`
+        : `calc(clamp(14px, ${rect.width * 0.032}px, 58px) * ${settings.subSize / 100})`;
+    
     const centerX = rect.left + rect.width / 2 + settings.posOffsetX;
 
+    let positionCss = "";
+    if (settings.positionTop) {
+        const topPx = rect.top + rect.height * (settings.edgeBottom / 100) - settings.posOffsetY;
+        positionCss = `top: ${topPx}px;`;
+    } else {
+        const bottomPx = rect.top + rect.height * (1 - settings.edgeBottom / 100) - settings.posOffsetY;
+        positionCss = `bottom: ${window.innerHeight - bottomPx}px;`;
+    }
+
     customSubContainer.style.cssText = `
-        position: fixed; left: ${centerX}px; bottom: ${window.innerHeight - bottomPx}px;
+        position: fixed; left: ${centerX}px; ${positionCss}
         transform: translateX(-50%); width: ${rect.width * maxWidthRatio}px; text-align: center;
         pointer-events: ${settings.dragMode ? "auto" : "none"}; z-index: 2147483646;
         font-family: ${settings.subFont}; font-size: ${fontSize}; font-weight: bold;
@@ -485,16 +629,58 @@ function updateSubStyle2() {
     const info = computeBoxRect();
     if (!info) { customSubContainer2.style.display = "none"; return; }
     const { rect, maxWidthRatio } = info;
-    const fontSize = `calc(clamp(14px, 3.2vw, 58px) * ${settings.subSize2 / 100})`;
-    const topPx = rect.top + rect.height * 0.08;
+
+    // Font: use secondary-specific font if set, otherwise fall back to primary font
+    const font2 = (settings.subFont2 && settings.subFont2 !== "") ? settings.subFont2 : settings.subFont;
+    
+    // Mobile gets exactly the 2.1.1 styling (vw based)
+    const fontSize2 = isMobile
+        ? `calc(clamp(14px, 3.2vw, 58px) * ${settings.subSize2 / 100})`
+        : `calc(clamp(14px, ${rect.width * 0.032}px, 58px) * ${settings.subSize2 / 100})`;
+        
     const centerX = rect.left + rect.width / 2;
 
+    // Use the REAL rendered height of the primary container when available.
+    // This correctly handles multi-line primary subtitles.
+    let primaryActualHeight;
+    if (customSubContainer && customSubContainer.style.display !== "none") {
+        const primaryBR = customSubContainer.getBoundingClientRect();
+        if (primaryBR.height > 0) {
+            lastPrimaryRenderedHeight = primaryBR.height;
+            primaryActualHeight = primaryBR.height;
+        }
+    }
+    // Fallback: use the cached last-known height so secondary doesn't jump
+    // when the primary disappears between subtitle cues.
+    if (!primaryActualHeight) {
+        if (lastPrimaryRenderedHeight > 0) {
+            primaryActualHeight = lastPrimaryRenderedHeight;
+        } else {
+            const primaryFontRefPx = Math.min(58, Math.max(14, rect.width * 0.032)) * (settings.subSize / 100);
+            primaryActualHeight = primaryFontRefPx * 1.35;
+        }
+    }
+
+    const gap = (settings.dualGap !== undefined ? settings.dualGap : 8);
+
+    let positionCss2 = "";
+    if (settings.positionTop) {
+        const primaryTopPx = rect.top + rect.height * (settings.edgeBottom / 100) - settings.posOffsetY;
+        const secondaryTopPx = primaryTopPx + primaryActualHeight + gap;
+        positionCss2 = `top: ${secondaryTopPx}px;`;
+    } else {
+        const primaryBottomPx = rect.top + rect.height * (1 - settings.edgeBottom / 100) - settings.posOffsetY;
+        const secondaryBottomPx = primaryBottomPx - primaryActualHeight - gap;
+        positionCss2 = `bottom: ${window.innerHeight - secondaryBottomPx}px;`;
+    }
+
     customSubContainer2.style.cssText = `
-        position: fixed; left: ${centerX}px; top: ${topPx}px;
+        position: fixed; left: ${centerX}px; ${positionCss2}
         transform: translateX(-50%); width: ${rect.width * maxWidthRatio}px; text-align: center;
-        pointer-events: none; z-index: 2147483646;
-        font-family: ${settings.subFont}; font-size: ${fontSize}; font-weight: bold;
-        color: ${settings.subColor2}; text-shadow: ${buildTextShadow("#000000", 2, "normal")};
+        pointer-events: none; z-index: 2147483645;
+        font-family: ${font2}; font-size: ${fontSize2}; font-weight: bold;
+        color: ${settings.subColor2}; opacity: ${(settings.subOpacity2 !== undefined ? settings.subOpacity2 : 100) / 100};
+        text-shadow: ${buildTextShadow(settings.borderColor2 || "#000000", settings.borderWidth2 !== undefined ? settings.borderWidth2 : 2, settings.shadowLevel2 || "normal")};
         display: ${(settings.dualEnabled && parsedSubtitles2.length) ? "block" : "none"};
         white-space: pre-wrap; line-height: 1.25;
     `;
@@ -522,7 +708,6 @@ function enableDragHandlers(container, target) {
     });
 }
 
-// ---- Senkron döngüsü (zaman + konum + fullscreen takibi aynı rAF'ta) -------
 function ensureSyncLoop(videoElement) {
     activeVideo = videoElement;
     if (syncAnimationId) cancelAnimationFrame(syncAnimationId);
@@ -530,7 +715,7 @@ function ensureSyncLoop(videoElement) {
     function checkTime() {
         if (!activeVideo || !document.body.contains(activeVideo)) {
             const v = getActiveVideo();
-            if (v) activeVideo = v;
+            if (v) { activeVideo = v; activeVideoSrc = v.currentSrc; }
         }
         if (activeVideo) {
             ensureContainerParent(customSubContainer);
@@ -548,9 +733,14 @@ function ensureSyncLoop(videoElement) {
                     for (let i = 0; i < parsedSubtitles.length; i++) {
                         if (t >= parsedSubtitles[i].start && t <= parsedSubtitles[i].end) { activeText = parsedSubtitles[i].text; break; }
                     }
-                    customSubContainer.innerText = activeText;
-                    if (customSubContainer.style.display !== "none") {
-                        customSubContainer.style.display = activeText ? "block" : "none";
+                    // Safe render: handles <i>/<b>/<u>/<font> tags and \n line breaks
+                    setSubText(customSubContainer, activeText);
+                    const showPrimary = !!activeText;
+                    customSubContainer.style.display = showPrimary ? "block" : "none";
+                    // Cache the rendered height while visible so secondary position stays stable
+                    if (showPrimary) {
+                        const h = customSubContainer.getBoundingClientRect().height;
+                        if (h > 0) lastPrimaryRenderedHeight = h;
                     }
                 }
                 if (customSubContainer2 && settings.dualEnabled && parsedSubtitles2.length) {
@@ -558,10 +748,9 @@ function ensureSyncLoop(videoElement) {
                     for (let i = 0; i < parsedSubtitles2.length; i++) {
                         if (t >= parsedSubtitles2[i].start && t <= parsedSubtitles2[i].end) { activeText2 = parsedSubtitles2[i].text; break; }
                     }
-                    customSubContainer2.innerText = activeText2;
-                    if (customSubContainer2.style.display !== "none") {
-                        customSubContainer2.style.display = activeText2 ? "block" : "none";
-                    }
+                    // Safe render: handles <i>/<b>/<u>/<font> tags and \n line breaks
+                    setSubText(customSubContainer2, activeText2);
+                    customSubContainer2.style.display = activeText2 ? "block" : "none";
                 }
             }
         }
@@ -570,7 +759,6 @@ function ensureSyncLoop(videoElement) {
     checkTime();
 }
 
-// ---- Deneysel: Ses analizine dayalı otomatik senkron tahmini ----------------
 let audioCtxRef = null;
 
 function startAutoSyncEstimate() {
@@ -600,7 +788,6 @@ function startAutoSyncEstimate() {
         const onsets = [];
         let wasQuiet = true;
         let quietSince = performance.now();
-        const startTime = video.currentTime;
         const ANALYSIS_MS = 30000;
         const startedAt = performance.now();
 
