@@ -53,6 +53,8 @@ let parsedSubtitles2 = [];
 let syncAnimationId = null;
 let videoWatchTimer = null;
 let lastPrimaryRenderedHeight = 0; // Cache last known primary height for stable secondary positioning
+let playResX = 384, playResY = 288;     // ASS PlayRes for primary (defaults per ASS spec)
+let playResX2 = 384, playResY2 = 288;   // ASS PlayRes for secondary
 
 function tr(key, vars) { return i18nText(key, settings.uiLang, vars); }
 
@@ -323,7 +325,20 @@ document.addEventListener("drop", (e) => {
 });
 
 function loadSubtitleFromText(text, extension, name, target) {
-    const subs = (extension === "srt") ? parseSRT(text) : parseASS(text);
+    let subs;
+    if (extension === "srt") {
+        subs = parseSRT(text);
+    } else {
+        const result = parseASS(text);
+        subs = result.subs;
+        if (target === "secondary") {
+            playResX2 = result.resX;
+            playResY2 = result.resY;
+        } else {
+            playResX = result.resX;
+            playResY = result.resY;
+        }
+    }
     if (subs.length === 0) return;
 
     if (target === "secondary") {
@@ -371,25 +386,162 @@ function parseSRT(data) {
     return subs;
 }
 
+// Convert supported ASS override tags to HTML, strip unsupported ones
+function convertASSFormattingToHTML(text) {
+    let result = text.replace(/\{([^}]*)\}/g, (_match, content) => {
+        let html = "";
+
+        // Bold: \b1 = on, \b0 = off (but not \b100 etc. which are font weights)
+        if (/\\b1(?!\d)/.test(content)) html += "<b>";
+        if (/\\b0(?!\d)/.test(content)) html += "</b>";
+
+        // Italic: \i1 = on, \i0 = off
+        if (/\\i1(?!\d)/.test(content)) html += "<i>";
+        if (/\\i0(?!\d)/.test(content)) html += "</i>";
+
+        // Underline: \u1 = on, \u0 = off
+        if (/\\u1(?!\d)/.test(content)) html += "<u>";
+        if (/\\u0(?!\d)/.test(content)) html += "</u>";
+
+        // Strikethrough: \s1 = on, \s0 = off
+        if (/\\s1(?!\d)/.test(content)) html += "<s>";
+        if (/\\s0(?!\d)/.test(content)) html += "</s>";
+
+        // Color: \c&H[AA]BBGGRR& or \1c&H[AA]BBGGRR& (ASS uses BGR order)
+        const colorMatch = content.match(/\\1?c\s*&H([0-9A-Fa-f]+)&/);
+        if (colorMatch) {
+            const hex = colorMatch[1];
+            if (hex.length >= 6) {
+                // Take last 6 chars as BBGGRR (skip optional alpha prefix)
+                const tail = hex.slice(-6);
+                const r = tail.substring(4, 6), g = tail.substring(2, 4), b = tail.substring(0, 2);
+                html += `<font color="#${r}${g}${b}">`;
+            }
+        }
+
+        return html;
+    });
+
+    // Convert \N (hard) and \n (soft) line breaks to newlines
+    result = result.replace(/\\[Nn]/g, "\n");
+
+    return result.trim();
+}
+
 function parseASS(assText) {
     const lines = assText.split("\n");
     let subs = [];
+    let resX = 384, resY = 288; // ASS spec defaults
+    const styles = {};           // styleName -> { alignment }
+    let styleFormatFields = [];  // column order from Style Format line
+    let currentSection = "";
     const tToS = (t) => {
         const p = t.trim().split(":");
         return p.length < 3 ? 0 : (parseFloat(p[0]) * 3600) + (parseFloat(p[1]) * 60) + parseFloat(p[2]);
     };
+    // Map legacy SSA \a values to ASS \an values
+    const ssaToAn = { 1:1, 2:2, 3:3, 5:7, 6:8, 7:9, 9:4, 10:5, 11:6 };
+
     lines.forEach(line => {
-        if (line.startsWith("Dialogue:")) {
-            const parts = line.split(",");
+        const trimmed = line.trim();
+
+        // Track which section we're in
+        if (trimmed.startsWith("[")) {
+            currentSection = trimmed.toLowerCase();
+            return;
+        }
+
+        // [Script Info] - PlayResX / PlayResY
+        const resXMatch = trimmed.match(/^PlayResX\s*:\s*(\d+)/i);
+        if (resXMatch) { resX = parseInt(resXMatch[1], 10); return; }
+        const resYMatch = trimmed.match(/^PlayResY\s*:\s*(\d+)/i);
+        if (resYMatch) { resY = parseInt(resYMatch[1], 10); return; }
+
+        // [V4+ Styles] or [V4 Styles] - parse Format and Style lines
+        if (currentSection.includes("styles")) {
+            if (trimmed.startsWith("Format:")) {
+                styleFormatFields = trimmed.substring(7).split(",").map(s => s.trim().toLowerCase());
+                return;
+            }
+            if (trimmed.startsWith("Style:")) {
+                const values = trimmed.substring(6).split(",").map(s => s.trim());
+                const nameIdx = styleFormatFields.indexOf("name");
+                const alignIdx = styleFormatFields.indexOf("alignment");
+                if (nameIdx >= 0 && nameIdx < values.length) {
+                    styles[values[nameIdx]] = {
+                        alignment: (alignIdx >= 0 && alignIdx < values.length)
+                            ? parseInt(values[alignIdx], 10) || 2
+                            : 2
+                    };
+                }
+                return;
+            }
+        }
+
+        // Dialogue lines
+        if (trimmed.startsWith("Dialogue:")) {
+            const parts = trimmed.split(",");
             if (parts.length >= 10) {
                 let text = parts.slice(9).join(",");
-                // Convert ASS override tags and line-breaks to plain newlines (safe for textContent)
-                text = text.replace(/\{.*?\}/g, "").replace(/\\[Nn]/g, "\n").trim();
-                subs.push({ start: tToS(parts[1]), end: tToS(parts[2]), text: text });
+                // Extract \pos(x,y) before stripping override tags
+                let pos = null;
+                const posMatch = text.match(/\\pos\s*\(\s*([\d.]+)\s*,\s*([\d.]+)\s*\)/);
+                if (posMatch) {
+                    pos = { x: parseFloat(posMatch[1]), y: parseFloat(posMatch[2]) };
+                }
+                // Extract alignment override: \an (ASS) or \a (SSA legacy)
+                let alignment = null;
+                const anMatch = text.match(/\\an\s*(\d+)/);
+                if (anMatch) {
+                    alignment = parseInt(anMatch[1], 10);
+                } else {
+                    const aMatch = text.match(/\\a\s*(\d+)/);
+                    if (aMatch) {
+                        alignment = ssaToAn[parseInt(aMatch[1], 10)] || 2;
+                    }
+                }
+                // Fall back to style's alignment, then default (2 = bottom-center)
+                if (alignment === null) {
+                    const styleName = parts[3] ? parts[3].trim() : "";
+                    alignment = (styles[styleName] && styles[styleName].alignment) || 2;
+                }
+
+                // Convert supported ASS formatting to HTML, strip unsupported tags
+                text = convertASSFormattingToHTML(text);
+                subs.push({ start: tToS(parts[1]), end: tToS(parts[2]), text, pos, alignment });
             }
         }
     });
-    return subs;
+    return { subs, resX, resY };
+}
+
+// Convert ASS \an alignment (numpad layout) to CSS absolute positioning
+// 7=TL  8=TC  9=TR
+// 4=ML  5=MC  6=MR
+// 1=BL  2=BC  3=BR
+function getAlignmentCSS(alignment) {
+    const a = alignment || 2;
+    const row = a <= 3 ? "bottom" : (a <= 6 ? "middle" : "top");
+    const col = [1,4,7].includes(a) ? "left" : ([3,6,9].includes(a) ? "right" : "center");
+
+    let css = "position: absolute; white-space: pre-wrap; max-width: 90%; ";
+
+    // Vertical
+    if (row === "bottom")     css += "bottom: 4%; ";
+    else if (row === "top")   css += "top: 4%; ";
+    else /* middle */         css += "top: 50%; ";
+
+    // Horizontal
+    if (col === "left")       css += "left: 4%; text-align: left; ";
+    else if (col === "right") css += "right: 4%; text-align: right; ";
+    else /* center */         css += "left: 50%; text-align: center; ";
+
+    // Transforms for centering
+    if (row === "middle" && col === "center") css += "transform: translate(-50%, -50%); ";
+    else if (row === "middle")                css += "transform: translateY(-50%); ";
+    else if (col === "center")                css += "transform: translateX(-50%); ";
+
+    return css;
 }
 
 function adjustDelay(delta) {
@@ -518,9 +670,9 @@ function buildTextShadow(borderColor, borderWidth, shadowLevel) {
     return offsets.map(([x,y]) => `${x}px ${y}px ${shadowLevel === "strong" ? w : 1}px ${borderColor}`).join(", ");
 }
 
-// ---- Safe subtitle renderer (handles <i>, <b>, <u>, <font color>, \n) --------
+// ---- Safe subtitle renderer (handles <i>, <b>, <u>, <s>, <font color>, \n) --------
 // Uses DOMParser so we never call innerHTML with untrusted content directly.
-const SAFE_INLINE_TAGS = new Set(["i", "b", "u", "em", "strong", "br", "font"]);
+const SAFE_INLINE_TAGS = new Set(["i", "b", "u", "s", "em", "strong", "br", "font"]);
 function setSubText(container, text) {
     container.textContent = ""; // clear safely
     if (!text) return;
@@ -729,28 +881,133 @@ function ensureSyncLoop(videoElement) {
             } else {
                 const t = activeVideo.currentTime - settings.delaySeconds;
                 if (customSubContainer && parsedSubtitles.length) {
-                    let activeText = "";
+                    // Collect ALL active subtitles at current time (not just the first)
+                    const activeEntries = [];
                     for (let i = 0; i < parsedSubtitles.length; i++) {
-                        if (t >= parsedSubtitles[i].start && t <= parsedSubtitles[i].end) { activeText = parsedSubtitles[i].text; break; }
+                        if (t >= parsedSubtitles[i].start && t <= parsedSubtitles[i].end) {
+                            activeEntries.push(parsedSubtitles[i]);
+                        }
                     }
-                    // Safe render: handles <i>/<b>/<u>/<font> tags and \n line breaks
-                    setSubText(customSubContainer, activeText);
-                    const showPrimary = !!activeText;
-                    customSubContainer.style.display = showPrimary ? "block" : "none";
-                    // Cache the rendered height while visible so secondary position stays stable
-                    if (showPrimary) {
+
+                    if (activeEntries.length === 0) {
+                        customSubContainer.textContent = "";
+                        customSubContainer.style.display = "none";
+                    } else {
+                        const hasPositioned = activeEntries.some(e => e.pos);
+                        const hasNonDefaultAlign = activeEntries.some(e => e.alignment && e.alignment !== 2);
+                        const needsOverlay = hasPositioned || hasNonDefaultAlign;
+                        customSubContainer.textContent = ""; // clear previous content
+
+                        if (needsOverlay) {
+                            // Switch container to video-overlay mode for absolute positioning
+                            const rect = activeVideo.getBoundingClientRect();
+                            const fontSize = isMobile
+                                ? `calc(clamp(14px, 3.2vw, 58px) * ${settings.subSize / 100})`
+                                : `calc(clamp(14px, ${rect.width * 0.032}px, 58px) * ${settings.subSize / 100})`;
+                            customSubContainer.style.cssText = `
+                                position: fixed;
+                                left: ${rect.left}px; top: ${rect.top}px;
+                                width: ${rect.width}px; height: ${rect.height}px;
+                                pointer-events: ${settings.dragMode ? "auto" : "none"};
+                                z-index: 2147483646;
+                                font-family: ${settings.subFont}; font-size: ${fontSize}; font-weight: bold;
+                                color: ${settings.subColor}; opacity: ${settings.subOpacity / 100};
+                                text-shadow: ${buildTextShadow(settings.borderColor, settings.borderWidth, settings.shadowLevel)};
+                                display: block; white-space: pre-wrap; line-height: 1.25;
+                                overflow: visible;
+                            `;
+                            activeEntries.forEach(entry => {
+                                const div = document.createElement("div");
+                                setSubText(div, entry.text);
+                                if (entry.pos) {
+                                    // Scale from ASS PlayRes coordinates to video pixel coordinates
+                                    const scaledX = (entry.pos.x / playResX) * rect.width;
+                                    const scaledY = (entry.pos.y / playResY) * rect.height;
+                                    div.style.cssText = `
+                                        position: absolute;
+                                        left: ${scaledX}px; top: ${scaledY}px;
+                                        transform: translate(-50%, -100%);
+                                        white-space: pre-wrap;
+                                    `;
+                                } else {
+                                    // Use alignment-based positioning
+                                    div.style.cssText = getAlignmentCSS(entry.alignment);
+                                }
+                                customSubContainer.appendChild(div);
+                            });
+                        } else {
+                            // All lines are default alignment (2) with no \pos: merge texts (backward-compatible)
+                            const merged = activeEntries.map(e => e.text).join("\n");
+                            setSubText(customSubContainer, merged);
+                        }
+                        customSubContainer.style.display = "block";
+                        // Cache the rendered height while visible so secondary position stays stable
                         const h = customSubContainer.getBoundingClientRect().height;
                         if (h > 0) lastPrimaryRenderedHeight = h;
                     }
                 }
                 if (customSubContainer2 && settings.dualEnabled && parsedSubtitles2.length) {
-                    let activeText2 = "";
+                    // Collect ALL active subtitles at current time (not just the first)
+                    const activeEntries2 = [];
                     for (let i = 0; i < parsedSubtitles2.length; i++) {
-                        if (t >= parsedSubtitles2[i].start && t <= parsedSubtitles2[i].end) { activeText2 = parsedSubtitles2[i].text; break; }
+                        if (t >= parsedSubtitles2[i].start && t <= parsedSubtitles2[i].end) {
+                            activeEntries2.push(parsedSubtitles2[i]);
+                        }
                     }
-                    // Safe render: handles <i>/<b>/<u>/<font> tags and \n line breaks
-                    setSubText(customSubContainer2, activeText2);
-                    customSubContainer2.style.display = activeText2 ? "block" : "none";
+
+                    if (activeEntries2.length === 0) {
+                        customSubContainer2.textContent = "";
+                        customSubContainer2.style.display = "none";
+                    } else {
+                        const hasPositioned2 = activeEntries2.some(e => e.pos);
+                        const hasNonDefaultAlign2 = activeEntries2.some(e => e.alignment && e.alignment !== 2);
+                        const needsOverlay2 = hasPositioned2 || hasNonDefaultAlign2;
+                        customSubContainer2.textContent = "";
+
+                        if (needsOverlay2) {
+                            // Switch container to video-overlay mode for absolute positioning
+                            const rect = activeVideo.getBoundingClientRect();
+                            const font2 = (settings.subFont2 && settings.subFont2 !== "") ? settings.subFont2 : settings.subFont;
+                            const fontSize2 = isMobile
+                                ? `calc(clamp(14px, 3.2vw, 58px) * ${settings.subSize2 / 100})`
+                                : `calc(clamp(14px, ${rect.width * 0.032}px, 58px) * ${settings.subSize2 / 100})`;
+                            customSubContainer2.style.cssText = `
+                                position: fixed;
+                                left: ${rect.left}px; top: ${rect.top}px;
+                                width: ${rect.width}px; height: ${rect.height}px;
+                                pointer-events: none; z-index: 2147483645;
+                                font-family: ${font2}; font-size: ${fontSize2}; font-weight: bold;
+                                color: ${settings.subColor2};
+                                opacity: ${(settings.subOpacity2 !== undefined ? settings.subOpacity2 : 100) / 100};
+                                text-shadow: ${buildTextShadow(settings.borderColor2 || "#000000", settings.borderWidth2 !== undefined ? settings.borderWidth2 : 2, settings.shadowLevel2 || "normal")};
+                                display: block; white-space: pre-wrap; line-height: 1.25;
+                                overflow: visible;
+                            `;
+                            activeEntries2.forEach(entry => {
+                                const div = document.createElement("div");
+                                setSubText(div, entry.text);
+                                if (entry.pos) {
+                                    const scaledX = (entry.pos.x / playResX2) * rect.width;
+                                    const scaledY = (entry.pos.y / playResY2) * rect.height;
+                                    div.style.cssText = `
+                                        position: absolute;
+                                        left: ${scaledX}px; top: ${scaledY}px;
+                                        transform: translate(-50%, -100%);
+                                        white-space: pre-wrap;
+                                    `;
+                                } else {
+                                    // Use alignment-based positioning
+                                    div.style.cssText = getAlignmentCSS(entry.alignment);
+                                }
+                                customSubContainer2.appendChild(div);
+                            });
+                        } else {
+                            // All lines are default alignment (2) with no \pos: merge texts (backward-compatible)
+                            const merged2 = activeEntries2.map(e => e.text).join("\n");
+                            setSubText(customSubContainer2, merged2);
+                        }
+                        customSubContainer2.style.display = "block";
+                    }
                 }
             }
         }
