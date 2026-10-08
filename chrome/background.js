@@ -77,6 +77,22 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         return true; 
     }
 
+    // A video iframe asks for the file picker to be shown in the top page
+    if (request.type === "OPEN_PICKER_TOP" && sender.tab) {
+        chrome.tabs.sendMessage(sender.tab.id, { type: "SHOW_PICKER_TOP", target: request.target }, { frameId: 0 })
+            .then(res => sendResponse(res || { ok: false }))
+            .catch(() => sendResponse({ ok: false }));
+        return true;
+    }
+
+    // The top-page picker has no video itself: forward the chosen subtitle to all frames of the tab
+    if (request.type === "RELAY_SUBTITLE" && sender.tab) {
+        chrome.tabs.sendMessage(sender.tab.id, {
+            type: "LOAD_SUBTITLE_TEXT", text: request.text, ext: request.ext, name: request.name, target: request.target
+        }).catch(() => {});
+        return;
+    }
+
     if (request.type === "OS_DOWNLOAD") {
         downloadSubtitle(request.file_id)
             .then(data => sendResponse({ ok: true, ...data }))

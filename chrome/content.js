@@ -80,9 +80,17 @@ function applySitePreset() {
 chrome.storage.onChanged.addListener((changes, area) => {
     if (area !== "local") return;
     let styleTouched = false;
+    let removedAny = false;
     Object.keys(changes).forEach(key => {
         if (key in DEFAULTS) {
-            settings[key] = changes[key].newValue;
+            const nv = changes[key].newValue;
+            if (nv === undefined) {
+                // Key was deleted (e.g. "Reset all settings") -> back to its default
+                settings[key] = JSON.parse(JSON.stringify(DEFAULTS[key]));
+                removedAny = true;
+            } else {
+                settings[key] = nv;
+            }
             if (["subSize","subOpacity","subColor","borderColor","borderWidth",
                  "shadowLevel","subFont","edgeBottom","aspectMode","positionTop",
                  "subColor2","subSize2","subOpacity2","subFont2","borderColor2",
@@ -91,16 +99,51 @@ chrome.storage.onChanged.addListener((changes, area) => {
             }
         }
     });
+    if (removedAny) {
+        settings._userTouchedStyle = false;
+        applySitePreset();
+        styleTouched = true;
+    }
     if (styleTouched) { updateSubStyle(); updateSubStyle2(); }
 });
 
 loadSettings();
 
+// Runs fn and tells the popup it worked ({ok:true}) or really failed (E104).
+// Only the frame that owns the <video> answers, so empty frames can never
+// produce a false error. alwaysRun=true keeps the old behaviour of running fn
+// in every frame (frames without a video just stay silent).
+function runAndAck(sendResponse, fn, alwaysRun) {
+    const hasVideo = !!document.querySelector("video");
+    if (!hasVideo && !alwaysRun) return;
+    let err = null;
+    try { fn(); } catch (e) { err = e; }
+    if (!hasVideo) return;
+    try {
+        sendResponse(err
+            ? { ok: false, code: "E104", detail: String((err && err.message) || err).slice(0, 120) }
+            : { ok: true });
+    } catch (e) { /* popup already gone */ }
+}
+
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     switch (request.type) {
         case "SHOW_PICKER_UI":
-            if (document.querySelector("video")) injectFilePickerUI(request.target || "primary");
+            if (document.querySelector("video")) {
+                runAndAck(sendResponse, () => openPicker(request.target || "primary"));
+            }
             break;
+        case "SHOW_PICKER_TOP": {
+            // Asked (via background) by a video iframe to show the picker in the top page
+            if (window !== window.top) break;
+            const fsEl = getFullscreenElement();
+            if (fsEl && /^(IFRAME|VIDEO)$/i.test(fsEl.tagName)) { sendResponse({ ok: false }); break; }
+            try {
+                injectFilePickerUI(request.target || "primary");
+                sendResponse({ ok: true });
+            } catch (e) { sendResponse({ ok: false }); }
+            break;
+        }
         case "TOGGLE_EXTENSION":
             settings.isEnabled = request.isEnabled;
             break;
@@ -145,10 +188,10 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
             loadSubtitleFromText(request.text, request.ext, request.name, request.target || "primary");
             break;
         case "LOAD_LAST_SUBTITLE":
-            restoreLastSubtitle(request.target || "primary");
+            runAndAck(sendResponse, () => restoreLastSubtitle(request.target || "primary"), true);
             break;
         case "START_AUTO_SYNC":
-            startAutoSyncEstimate();
+            runAndAck(sendResponse, () => startAutoSyncEstimate(), true);
             break;
         case "SET_LANG":
             settings.uiLang = request.lang === "tr" ? "tr" : "en";
@@ -228,7 +271,7 @@ function showToast(msg) {
     toast.innerText = msg;
     
     if (activeVideo) {
-        const rect = activeVideo.getBoundingClientRect();
+        const rect = getVideoContentRect(activeVideo);
         const centerX = rect.left + rect.width / 2;
         const topY = rect.top + rect.height * 0.15;
         toast.style.left = `${centerX}px`;
@@ -247,18 +290,44 @@ function showToast(msg) {
     toast.hideTimeout = setTimeout(() => { toast.style.opacity = "0"; }, 2500);
 }
 
+// Show the file picker in the TOP page (top-right of the browser viewport) instead of
+// inside a small video iframe. If we are the top frame, or this frame is fullscreen
+// (only its own content is visible then), or the relay fails, show it right here.
+function openPicker(target) {
+    const showHere = () => injectFilePickerUI(target);
+    if (window === window.top || getFullscreenElement()) { showHere(); return; }
+    try {
+        chrome.runtime.sendMessage({ type: "OPEN_PICKER_TOP", target }, (res) => {
+            if (chrome.runtime.lastError || !res || !res.ok) showHere();
+        });
+    } catch (e) { showHere(); }
+}
+
 function injectFilePickerUI(target) {
     let existing = document.getElementById("ass-ext-floating-picker");
     if (existing) existing.remove();
 
+    // Shadow DOM host: the page's own CSS (box-sizing, font-size, input/button rules,
+    // line-height, zoom etc.) can't leak in, so the picker looks identical on every site.
+    const host = document.createElement("div");
+    host.id = "ass-ext-floating-picker";
+    host.style.cssText = "all: initial; position: fixed; top: 20px; right: 20px; z-index: 2147483647; display: block;";
+    const shadow = host.attachShadow({ mode: "open" });
+    const css = document.createElement("style");
+    css.textContent = `
+        :host { all: initial; }
+        * { box-sizing: border-box; margin: 0; letter-spacing: normal; text-transform: none;
+            font-family: 'Segoe UI', Roboto, Arial, sans-serif; line-height: 1.35; }
+        input, button { font-family: inherit; }
+    `;
+    shadow.appendChild(css);
+
     const container = document.createElement("div");
-    container.id = "ass-ext-floating-picker";
     container.style.cssText = `
-        position: fixed; top: 20px; right: 20px; z-index: 2147483647;
         background: rgba(22, 22, 22, 0.97); padding: 15px; border-radius: 10px;
         box-shadow: 0 4px 20px rgba(0,0,0,0.7); border: 1px solid #3a3a3a;
-        display: flex; flex-direction: column; gap: 10px; font-family: 'Segoe UI', sans-serif;
-        color: white; width: 260px;
+        display: flex; flex-direction: column; gap: 10px;
+        color: white; width: 260px; max-width: calc(100vw - 40px); font-size: 14px;
     `;
 
     const title = document.createElement("div");
@@ -272,20 +341,27 @@ function injectFilePickerUI(target) {
     const fileInput = document.createElement("input");
     fileInput.type = "file";
     fileInput.accept = ".ass,.ssa,.srt";
-    fileInput.style.cssText = "color: white; font-size: 12px; cursor: pointer;";
+    fileInput.style.cssText = "color: white; font-size: 12px; cursor: pointer; width: 100%;";
 
     const closeBtn = document.createElement("button");
     closeBtn.innerText = tr("picker_cancel");
     closeBtn.style.cssText = "background: #d32f2f; color: white; border: none; padding: 6px; border-radius: 4px; cursor: pointer; font-weight: bold; margin-top: 5px;";
-    closeBtn.onclick = () => container.remove();
+    closeBtn.onclick = () => host.remove();
 
     const handleFile = (file) => {
         if (!file) return;
         const extension = file.name.split(".").pop().toLowerCase();
         const reader = new FileReader();
         reader.onload = (event) => {
-            loadSubtitleFromText(event.target.result, extension, file.name, target);
-            container.remove();
+            if (document.querySelector("video")) {
+                loadSubtitleFromText(event.target.result, extension, file.name, target);
+            } else {
+                // This (top) frame has no video: let the background hand the text to the video frame
+                try {
+                    chrome.runtime.sendMessage({ type: "RELAY_SUBTITLE", text: event.target.result, ext: extension, name: file.name, target });
+                } catch (e) { /* ignore */ }
+            }
+            host.remove();
         };
         const encoding = (extension === "srt") ? "utf-8" : "windows-1254";
         reader.readAsText(file, encoding);
@@ -305,7 +381,10 @@ function injectFilePickerUI(target) {
     container.appendChild(dropHint);
     container.appendChild(fileInput);
     container.appendChild(closeBtn);
-    document.body.appendChild(container);
+    shadow.appendChild(container);
+    const fsHost = getFullscreenElement();
+    const mountHost = (fsHost && !/^(IFRAME|VIDEO)$/i.test(fsHost.tagName)) ? fsHost : document.documentElement;
+    mountHost.appendChild(host);
 }
 
 document.addEventListener("dragover", (e) => {
@@ -432,6 +511,7 @@ function parseASS(assText) {
     const lines = assText.split("\n");
     let subs = [];
     let resX = 384, resY = 288; // ASS spec defaults
+    let foundResX = false, foundResY = false;
     const styles = {};           // styleName -> { alignment }
     let styleFormatFields = [];  // column order from Style Format line
     let currentSection = "";
@@ -453,9 +533,9 @@ function parseASS(assText) {
 
         // [Script Info] - PlayResX / PlayResY
         const resXMatch = trimmed.match(/^PlayResX\s*:\s*(\d+)/i);
-        if (resXMatch) { resX = parseInt(resXMatch[1], 10); return; }
+        if (resXMatch) { resX = parseInt(resXMatch[1], 10); foundResX = true; return; }
         const resYMatch = trimmed.match(/^PlayResY\s*:\s*(\d+)/i);
-        if (resYMatch) { resY = parseInt(resYMatch[1], 10); return; }
+        if (resYMatch) { resY = parseInt(resYMatch[1], 10); foundResY = true; return; }
 
         // [V4+ Styles] or [V4 Styles] - parse Format and Style lines
         if (currentSection.includes("styles")) {
@@ -467,11 +547,18 @@ function parseASS(assText) {
                 const values = trimmed.substring(6).split(",").map(s => s.trim());
                 const nameIdx = styleFormatFields.indexOf("name");
                 const alignIdx = styleFormatFields.indexOf("alignment");
+                const fsIdx = styleFormatFields.indexOf("fontsize");
+                const isLegacySSA = currentSection.includes("v4 styles") && !currentSection.includes("v4+");
                 if (nameIdx >= 0 && nameIdx < values.length) {
+                    let styleAlign = (alignIdx >= 0 && alignIdx < values.length)
+                        ? parseInt(values[alignIdx], 10) || 2
+                        : 2;
+                    if (isLegacySSA) styleAlign = ssaToAn[styleAlign] || 2;
                     styles[values[nameIdx]] = {
-                        alignment: (alignIdx >= 0 && alignIdx < values.length)
-                            ? parseInt(values[alignIdx], 10) || 2
-                            : 2
+                        alignment: styleAlign,
+                        fontSize: (fsIdx >= 0 && fsIdx < values.length)
+                            ? (parseFloat(values[fsIdx]) || null)
+                            : null
                     };
                 }
                 return;
@@ -500,19 +587,66 @@ function parseASS(assText) {
                         alignment = ssaToAn[parseInt(aMatch[1], 10)] || 2;
                     }
                 }
+                const styleName = parts[3] ? parts[3].trim() : "";
                 // Fall back to style's alignment, then default (2 = bottom-center)
                 if (alignment === null) {
-                    const styleName = parts[3] ? parts[3].trim() : "";
                     alignment = (styles[styleName] && styles[styleName].alignment) || 2;
                 }
+                // Font size in PlayRes units: \fs override first, else the style's Fontsize.
+                // (\fs followed directly by digits, so \fscx / \fsp are not matched)
+                let fontSize = null;
+                const fsMatch = text.match(/\\fs(\d+(?:\.\d+)?)/);
+                if (fsMatch) fontSize = parseFloat(fsMatch[1]);
+                else if (styles[styleName] && styles[styleName].fontSize) fontSize = styles[styleName].fontSize;
 
                 // Convert supported ASS formatting to HTML, strip unsupported tags
                 text = convertASSFormattingToHTML(text);
-                subs.push({ start: tToS(parts[1]), end: tToS(parts[2]), text, pos, alignment });
+                subs.push({ start: tToS(parts[1]), end: tToS(parts[2]), text, pos, alignment, fontSize });
             }
         }
     });
+    // Only one PlayRes given: derive the other one the way libass does (4:3)
+    if (foundResX && !foundResY) resY = Math.round(resX * 3 / 4);
+    else if (foundResY && !foundResX) resX = Math.round(resY * 4 / 3);
+    // Guard against 0 / nonsense values so we never divide by zero later
+    if (!(resX > 0)) resX = 384;
+    if (!(resY > 0)) resY = 288;
     return { subs, resX, resY };
+}
+
+// Style one overlay entry (positioned / non-default alignment) like a real ASS renderer:
+//  - font size = ASS font size (PlayRes units) scaled by video height / PlayResY
+//    (still multiplied by the user's size slider)
+//  - \pos is the anchor point of the text box according to the alignment (\an),
+//    not always its bottom-centre; the box is also limited so it can't leave the video
+function styleOverlayEntry(div, entry, rect, resX, resY, sizePercent) {
+    let fontCss = "";
+    const isSpecial = !!entry.pos || (entry.alignment && entry.alignment !== 2);
+    if (isSpecial && entry.fontSize && resY > 0 && rect.height > 0) {
+        const px = entry.fontSize * (rect.height / resY) * ((sizePercent || 100) / 100);
+        fontCss = `font-size: ${Math.max(8, px).toFixed(2)}px; `;
+    }
+    if (!entry.pos) {
+        div.style.cssText = getAlignmentCSS(entry.alignment) + fontCss;
+        return;
+    }
+    const a = entry.alignment || 2;
+    const col = [1,4,7].includes(a) ? "left" : ([3,6,9].includes(a) ? "right" : "center");
+    const row = a <= 3 ? "bottom" : (a <= 6 ? "middle" : "top");
+    const x = (entry.pos.x / resX) * rect.width;
+    const y = (entry.pos.y / resY) * rect.height;
+    const tx = col === "left" ? "0" : (col === "right" ? "-100%" : "-50%");
+    const ty = row === "top" ? "0" : (row === "bottom" ? "-100%" : "-50%");
+    let maxW = col === "left" ? rect.width - x : (col === "right" ? x : 2 * Math.min(x, rect.width - x));
+    maxW = Math.max(rect.width * 0.15, Math.min(maxW, rect.width * 0.98));
+    div.style.cssText = `
+        position: absolute;
+        left: ${x}px; top: ${y}px;
+        transform: translate(${tx}, ${ty});
+        width: max-content; max-width: ${maxW}px;
+        white-space: pre-wrap; text-align: ${col};
+        ${fontCss}
+    `;
 }
 
 // Convert ASS \an alignment (numpad layout) to CSS absolute positioning
@@ -661,13 +795,37 @@ function initContainer2(videoElement) {
     updateSubStyle2();
 }
 
+// The old 4/8 integer-offset shadows left visible stair-steps (mobile AND desktop).
+// Use a round ring of sub-pixel offsets with a tiny blur so the outline is
+// anti-aliased. The number of directions grows with the outline width so wide
+// outlines don't get scalloped edges; a second inner ring keeps thin glyph
+// strokes from detaching from their outline.
+function buildSmoothShadow(color, w, strong) {
+    const ring = (radius, steps, blur) => {
+        const out = [];
+        for (let i = 0; i < steps; i++) {
+            const a = (Math.PI * 2 * i) / steps;
+            const x = (Math.cos(a) * radius).toFixed(2);
+            const y = (Math.sin(a) * radius).toFixed(2);
+            out.push(`${x}px ${y}px ${blur}px ${color}`);
+        }
+        return out;
+    };
+    // Radius/blur calibrated (by rendering old vs new) so the outline weight matches the
+    // old 4/8-offset look: a plain ring at radius w looked ~10-25% thinner.
+    const r = strong ? w * 1.2 : w;
+    const blur = 0.8;
+    const outerSteps = Math.min(32, Math.max(strong ? 16 : 12, Math.ceil(Math.PI * 2 * w)));
+    const parts = ring(r, outerSteps, blur);
+    if (strong || w >= 3) parts.push(...ring(r * 0.5, Math.max(8, Math.ceil(outerSteps / 2)), blur));
+    if (strong) parts.push(`0px 0px ${w}px ${color}`);
+    return parts.join(", ");
+}
+
 function buildTextShadow(borderColor, borderWidth, shadowLevel) {
     if (shadowLevel === "none") return "none";
     const w = Math.max(1, borderWidth);
-    const offsets = shadowLevel === "strong"
-        ? [[-w,-w],[w,-w],[-w,w],[w,w],[0,-w],[0,w],[-w,0],[w,0],[0,0]]
-        : [[-w,-w],[w,-w],[-w,w],[w,w]];
-    return offsets.map(([x,y]) => `${x}px ${y}px ${shadowLevel === "strong" ? w : 1}px ${borderColor}`).join(", ");
+    return buildSmoothShadow(borderColor, w, shadowLevel === "strong");
 }
 
 // ---- Safe subtitle renderer (handles <i>, <b>, <u>, <s>, <font color>, \n) --------
@@ -732,9 +890,50 @@ if (isMobile) {
     document.head.appendChild(fontLink);
 }
 
+// Returns the rectangle the video PICTURE actually occupies on screen.
+// <video>.getBoundingClientRect() is the element box, which is the whole player area:
+// with object-fit: contain (the default) a 16:9 video on a 20:9 phone screen or in a
+// 4:3 box is letterboxed/pillarboxed INSIDE that box. Subtitles must be laid out against
+// the picture (videoWidth x videoHeight aspect), not against the black bars.
+function getVideoContentRect(video) {
+    const r = video.getBoundingClientRect();
+    const vw = video.videoWidth, vh = video.videoHeight;
+    if (!vw || !vh || r.width <= 0 || r.height <= 0) return r;
+
+    const cs = getComputedStyle(video);
+    const fit = cs.objectFit || "fill";
+    if (fit === "fill" || fit === "cover") return r; // fill = stretched, cover = cropped to box
+
+    // Content box = element box minus border and padding
+    const pl = parseFloat(cs.paddingLeft) || 0, pr = parseFloat(cs.paddingRight) || 0;
+    const pt = parseFloat(cs.paddingTop) || 0,  pb = parseFloat(cs.paddingBottom) || 0;
+    const bl = parseFloat(cs.borderLeftWidth) || 0, br = parseFloat(cs.borderRightWidth) || 0;
+    const bt = parseFloat(cs.borderTopWidth) || 0,  bb = parseFloat(cs.borderBottomWidth) || 0;
+    const boxL = r.left + bl + pl, boxT = r.top + bt + pt;
+    const boxW = r.width - bl - br - pl - pr, boxH = r.height - bt - bb - pt - pb;
+    if (boxW <= 0 || boxH <= 0) return r;
+
+    let scale = Math.min(boxW / vw, boxH / vh);          // contain
+    if (fit === "none") scale = 1;
+    else if (fit === "scale-down") scale = Math.min(1, scale);
+    const w = vw * scale, h = vh * scale;
+
+    // object-position (computed value is "<x> <y>", percentages or lengths)
+    const pos = (cs.objectPosition || "50% 50%").split(/\s+/);
+    const off = (token, free) => {
+        if (!token) return free / 2;
+        if (token.endsWith("%")) return free * (parseFloat(token) / 100);
+        const px = parseFloat(token);
+        return isNaN(px) ? free / 2 : px;
+    };
+    const left = boxL + off(pos[0], boxW - w);
+    const top  = boxT + off(pos[1], boxH - h);
+    return { left, top, width: w, height: h, right: left + w, bottom: top + h, x: left, y: top };
+}
+
 function computeBoxRect() {
     if (!activeVideo) return null;
-    const rect = activeVideo.getBoundingClientRect();
+    const rect = getVideoContentRect(activeVideo);
     if (rect.width === 0 || rect.height === 0) return null;
     const isVertical = settings.aspectMode === "vertical" ||
         (settings.aspectMode === "auto" && rect.height > rect.width * 1.1);
@@ -748,10 +947,8 @@ function updateSubStyle() {
     if (!info) { customSubContainer.style.display = "none"; return; }
     const { rect, maxWidthRatio } = info;
 
-    // Mobile gets exactly the 2.1.1 styling (vw based), desktop gets the rect-based styling
-    const fontSize = isMobile
-        ? `calc(clamp(14px, 3.2vw, 58px) * ${settings.subSize / 100})`
-        : `calc(clamp(14px, ${rect.width * 0.032}px, 58px) * ${settings.subSize / 100})`;
+    // Font size is based on the video picture width (not the viewport), so it is identical on any screen
+    const fontSize = `calc(clamp(14px, ${rect.width * 0.032}px, 58px) * ${settings.subSize / 100})`;
     
     const centerX = rect.left + rect.width / 2 + settings.posOffsetX;
 
@@ -785,10 +982,8 @@ function updateSubStyle2() {
     // Font: use secondary-specific font if set, otherwise fall back to primary font
     const font2 = (settings.subFont2 && settings.subFont2 !== "") ? settings.subFont2 : settings.subFont;
     
-    // Mobile gets exactly the 2.1.1 styling (vw based)
-    const fontSize2 = isMobile
-        ? `calc(clamp(14px, 3.2vw, 58px) * ${settings.subSize2 / 100})`
-        : `calc(clamp(14px, ${rect.width * 0.032}px, 58px) * ${settings.subSize2 / 100})`;
+    // Font size based on the video picture width (not the viewport)
+    const fontSize2 = `calc(clamp(14px, ${rect.width * 0.032}px, 58px) * ${settings.subSize2 / 100})`;
         
     const centerX = rect.left + rect.width / 2;
 
@@ -900,10 +1095,8 @@ function ensureSyncLoop(videoElement) {
 
                         if (needsOverlay) {
                             // Switch container to video-overlay mode for absolute positioning
-                            const rect = activeVideo.getBoundingClientRect();
-                            const fontSize = isMobile
-                                ? `calc(clamp(14px, 3.2vw, 58px) * ${settings.subSize / 100})`
-                                : `calc(clamp(14px, ${rect.width * 0.032}px, 58px) * ${settings.subSize / 100})`;
+                            const rect = getVideoContentRect(activeVideo);
+                            const fontSize = `calc(clamp(14px, ${rect.width * 0.032}px, 58px) * ${settings.subSize / 100})`;
                             customSubContainer.style.cssText = `
                                 position: fixed;
                                 left: ${rect.left}px; top: ${rect.top}px;
@@ -919,20 +1112,7 @@ function ensureSyncLoop(videoElement) {
                             activeEntries.forEach(entry => {
                                 const div = document.createElement("div");
                                 setSubText(div, entry.text);
-                                if (entry.pos) {
-                                    // Scale from ASS PlayRes coordinates to video pixel coordinates
-                                    const scaledX = (entry.pos.x / playResX) * rect.width;
-                                    const scaledY = (entry.pos.y / playResY) * rect.height;
-                                    div.style.cssText = `
-                                        position: absolute;
-                                        left: ${scaledX}px; top: ${scaledY}px;
-                                        transform: translate(-50%, -100%);
-                                        white-space: pre-wrap;
-                                    `;
-                                } else {
-                                    // Use alignment-based positioning
-                                    div.style.cssText = getAlignmentCSS(entry.alignment);
-                                }
+                                styleOverlayEntry(div, entry, rect, playResX, playResY, settings.subSize);
                                 customSubContainer.appendChild(div);
                             });
                         } else {
@@ -966,11 +1146,9 @@ function ensureSyncLoop(videoElement) {
 
                         if (needsOverlay2) {
                             // Switch container to video-overlay mode for absolute positioning
-                            const rect = activeVideo.getBoundingClientRect();
+                            const rect = getVideoContentRect(activeVideo);
                             const font2 = (settings.subFont2 && settings.subFont2 !== "") ? settings.subFont2 : settings.subFont;
-                            const fontSize2 = isMobile
-                                ? `calc(clamp(14px, 3.2vw, 58px) * ${settings.subSize2 / 100})`
-                                : `calc(clamp(14px, ${rect.width * 0.032}px, 58px) * ${settings.subSize2 / 100})`;
+                            const fontSize2 = `calc(clamp(14px, ${rect.width * 0.032}px, 58px) * ${settings.subSize2 / 100})`;
                             customSubContainer2.style.cssText = `
                                 position: fixed;
                                 left: ${rect.left}px; top: ${rect.top}px;
@@ -986,19 +1164,7 @@ function ensureSyncLoop(videoElement) {
                             activeEntries2.forEach(entry => {
                                 const div = document.createElement("div");
                                 setSubText(div, entry.text);
-                                if (entry.pos) {
-                                    const scaledX = (entry.pos.x / playResX2) * rect.width;
-                                    const scaledY = (entry.pos.y / playResY2) * rect.height;
-                                    div.style.cssText = `
-                                        position: absolute;
-                                        left: ${scaledX}px; top: ${scaledY}px;
-                                        transform: translate(-50%, -100%);
-                                        white-space: pre-wrap;
-                                    `;
-                                } else {
-                                    // Use alignment-based positioning
-                                    div.style.cssText = getAlignmentCSS(entry.alignment);
-                                }
+                                styleOverlayEntry(div, entry, rect, playResX2, playResY2, settings.subSize2 !== undefined ? settings.subSize2 : 100);
                                 customSubContainer2.appendChild(div);
                             });
                         } else {

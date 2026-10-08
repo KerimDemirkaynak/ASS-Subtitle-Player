@@ -38,6 +38,64 @@ document.addEventListener("DOMContentLoaded", () => {
         });
     }
 
+    // ---- Real-error reporting for actions that close the popup ----------
+    // The popup only closes once the page confirmed the action. If nothing
+    // confirms it, we retry a few times (covers slow page / slow content
+    // script) and only then show an error code.
+    const ERR_TEXT = {
+        E101: { en: "No active tab found.", tr: "Aktif sekme bulunamadı." },
+        E102: { en: "Can't reach this page. Reload it, or open a normal web page (not about:/add-ons).", tr: "Bu sayfaya ulaşılamıyor. Sayfayı yenileyin veya normal bir web sayfası açın (about:/eklenti sayfaları olmaz)." },
+        E103: { en: "No video found on this page. Start the video, then try again.", tr: "Bu sayfada video bulunamadı. Videoyu başlatıp tekrar deneyin." },
+        E104: { en: "The page reported an internal error.", tr: "Sayfa bir iç hata bildirdi." },
+        E105: { en: "Unexpected error.", tr: "Beklenmeyen hata." }
+    };
+    function showErrorCode(code, detail) {
+        const el = $("error-banner");
+        const t = ERR_TEXT[code] || ERR_TEXT.E105;
+        el.textContent = "";
+        const b = document.createElement("b");
+        b.textContent = (currentLang === "tr" ? "Hata " : "Error ") + code;
+        el.appendChild(b);
+        el.appendChild(document.createTextNode(" · " + t[currentLang === "tr" ? "tr" : "en"]));
+        if (detail) {
+            const d = document.createElement("div");
+            d.style.cssText = "font-family:monospace; font-size:10px; opacity:.8; margin-top:3px; word-break:break-word;";
+            d.textContent = detail;
+            el.appendChild(d);
+        }
+        el.style.display = "block";
+    }
+    function clearErrorCode() { $("error-banner").style.display = "none"; }
+
+    function sendAndConfirm(msg) {
+        clearErrorCode();
+        const ATTEMPTS = 4, WAIT_MS = 400;
+        chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+            const tab = tabs && tabs[0];
+            if (!tab || tab.id === undefined) { showErrorCode("E101"); return; }
+            let attempt = 0;
+            const tryOnce = () => {
+                attempt++;
+                let p;
+                try { p = chrome.tabs.sendMessage(tab.id, msg); } catch (e) { p = Promise.reject(e); }
+                Promise.resolve(p).then((res) => {
+                    if (res && res.ok === true) { window.close(); return; }
+                    if (res && res.ok === false) { showErrorCode(res.code || "E104", res.detail); return; }
+                    // Page is reachable but no frame with a video answered (yet)
+                    if (attempt < ATTEMPTS) setTimeout(tryOnce, WAIT_MS);
+                    else showErrorCode("E103");
+                }).catch((err) => {
+                    const m = String((err && err.message) || err);
+                    const unreachable = /Receiving end does not exist|Could not establish connection/i.test(m);
+                    if (attempt < ATTEMPTS) setTimeout(tryOnce, WAIT_MS);
+                    else if (unreachable) showErrorCode("E102");
+                    else showErrorCode("E105", m.slice(0, 120));
+                });
+            };
+            tryOnce();
+        });
+    }
+
     function getActiveTab(cb) {
         chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => cb(tabs[0]));
     }
@@ -100,20 +158,16 @@ document.addEventListener("DOMContentLoaded", () => {
     });
 
     $("upload-btn").addEventListener("click", () => {
-        broadcastMessage({ type: "SHOW_PICKER_UI", target: "primary" });
-        window.close();
+        sendAndConfirm({ type: "SHOW_PICKER_UI", target: "primary" });
     });
     $("upload-btn-2").addEventListener("click", () => {
-        broadcastMessage({ type: "SHOW_PICKER_UI", target: "secondary" });
-        window.close();
+        sendAndConfirm({ type: "SHOW_PICKER_UI", target: "secondary" });
     });
     $("last-sub-btn").addEventListener("click", () => {
-        broadcastMessage({ type: "LOAD_LAST_SUBTITLE", target: "primary" });
-        window.close();
+        sendAndConfirm({ type: "LOAD_LAST_SUBTITLE", target: "primary" });
     });
     $("last-sub-btn-2").addEventListener("click", () => {
-        broadcastMessage({ type: "LOAD_LAST_SUBTITLE", target: "secondary" });
-        window.close();
+        sendAndConfirm({ type: "LOAD_LAST_SUBTITLE", target: "secondary" });
     });
 
     $("size-slider").addEventListener("input", (e) => {
@@ -215,8 +269,7 @@ document.addEventListener("DOMContentLoaded", () => {
     $("load-bluray").addEventListener("click", () => loadSyncProfile("bluray"));
 
     $("autosync-btn").addEventListener("click", () => {
-        broadcastMessage({ type: "START_AUTO_SYNC" });
-        window.close();
+        sendAndConfirm({ type: "START_AUTO_SYNC" });
     });
 
     chrome.runtime.onMessage.addListener((request) => {
@@ -346,8 +399,9 @@ document.addEventListener("DOMContentLoaded", () => {
 
     $("reset-all-settings").addEventListener("click", () => {
         if (confirm(i18nText("reset_all_confirm", currentLang))) {
+            // No runtime.reload(): it orphans the content scripts in open tabs and leaves the
+            // last subtitle frozen on screen. The content scripts reset themselves via storage.onChanged.
             chrome.storage.local.clear(() => {
-                chrome.runtime.reload();
                 window.close();
             });
         }
