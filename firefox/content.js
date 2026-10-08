@@ -307,14 +307,27 @@ function injectFilePickerUI(target) {
     let existing = document.getElementById("ass-ext-floating-picker");
     if (existing) existing.remove();
 
+    // Shadow DOM host: the page's own CSS (box-sizing, font-size, input/button rules,
+    // line-height, zoom etc.) can't leak in, so the picker looks identical on every site.
+    const host = document.createElement("div");
+    host.id = "ass-ext-floating-picker";
+    host.style.cssText = "all: initial; position: fixed; top: 20px; right: 20px; z-index: 2147483647; display: block;";
+    const shadow = host.attachShadow({ mode: "open" });
+    const css = document.createElement("style");
+    css.textContent = `
+        :host { all: initial; }
+        * { box-sizing: border-box; margin: 0; letter-spacing: normal; text-transform: none;
+            font-family: 'Segoe UI', Roboto, Arial, sans-serif; line-height: 1.35; }
+        input, button { font-family: inherit; }
+    `;
+    shadow.appendChild(css);
+
     const container = document.createElement("div");
-    container.id = "ass-ext-floating-picker";
     container.style.cssText = `
-        position: fixed; top: 20px; right: 20px; z-index: 2147483647;
         background: rgba(22, 22, 22, 0.97); padding: 15px; border-radius: 10px;
         box-shadow: 0 4px 20px rgba(0,0,0,0.7); border: 1px solid #3a3a3a;
-        display: flex; flex-direction: column; gap: 10px; font-family: 'Segoe UI', sans-serif;
-        color: white; width: 260px;
+        display: flex; flex-direction: column; gap: 10px;
+        color: white; width: 260px; max-width: calc(100vw - 40px); font-size: 14px;
     `;
 
     const title = document.createElement("div");
@@ -328,12 +341,12 @@ function injectFilePickerUI(target) {
     const fileInput = document.createElement("input");
     fileInput.type = "file";
     fileInput.accept = ".ass,.ssa,.srt";
-    fileInput.style.cssText = "color: white; font-size: 12px; cursor: pointer;";
+    fileInput.style.cssText = "color: white; font-size: 12px; cursor: pointer; width: 100%;";
 
     const closeBtn = document.createElement("button");
     closeBtn.innerText = tr("picker_cancel");
     closeBtn.style.cssText = "background: #d32f2f; color: white; border: none; padding: 6px; border-radius: 4px; cursor: pointer; font-weight: bold; margin-top: 5px;";
-    closeBtn.onclick = () => container.remove();
+    closeBtn.onclick = () => host.remove();
 
     const handleFile = (file) => {
         if (!file) return;
@@ -348,7 +361,7 @@ function injectFilePickerUI(target) {
                     chrome.runtime.sendMessage({ type: "RELAY_SUBTITLE", text: event.target.result, ext: extension, name: file.name, target });
                 } catch (e) { /* ignore */ }
             }
-            container.remove();
+            host.remove();
         };
         const encoding = (extension === "srt") ? "utf-8" : "windows-1254";
         reader.readAsText(file, encoding);
@@ -368,9 +381,10 @@ function injectFilePickerUI(target) {
     container.appendChild(dropHint);
     container.appendChild(fileInput);
     container.appendChild(closeBtn);
+    shadow.appendChild(container);
     const fsHost = getFullscreenElement();
-    const host = (fsHost && !/^(IFRAME|VIDEO)$/i.test(fsHost.tagName)) ? fsHost : document.body;
-    host.appendChild(container);
+    const mountHost = (fsHost && !/^(IFRAME|VIDEO)$/i.test(fsHost.tagName)) ? fsHost : document.documentElement;
+    mountHost.appendChild(host);
 }
 
 document.addEventListener("dragover", (e) => {
