@@ -26,18 +26,18 @@
     body {
         font-family: -apple-system, 'Segoe UI', Roboto, sans-serif;
         background: var(--bg);
-        color: var(--text); 
-        margin: 0 auto; 
+        color: var(--text);
+        margin: 0 auto;
         padding: 9px;
         width: 310px;
         height: 550px;
-        display: flex; 
-        flex-direction: column; 
+        display: flex;
+        flex-direction: column;
         gap: 6px;
         font-size: 12px;
         overflow: hidden;
     }
-    
+
     /* MOBILE SEPARATION */
     @media (pointer: coarse) {
         body {
@@ -49,7 +49,7 @@
             overflow-y: auto;
         }
     }
-    
+
     .header-row { display:flex; align-items:center; justify-content:space-between; flex-shrink: 0; }
     h3 { margin: 0; font-size: 13.5px; font-weight: 700; display:flex; align-items:center; gap:5px; letter-spacing:.2px; }
     .lang-switch { display:flex; background: var(--panel-2); border-radius: 20px; padding: 2px; gap:2px; }
@@ -89,14 +89,14 @@
     }
     .tab-btn:hover { filter:none; color: var(--text); }
     .tab-btn.active { color: var(--accent); border-bottom: 2px solid var(--accent); }
-    
-    .tab-panel { 
-        display:none; 
-        flex-direction:column; 
-        gap:8px; 
+
+    .tab-panel {
+        display:none;
+        flex-direction:column;
+        gap:8px;
         flex: 1;
         min-height: 0;
-        overflow-y: auto; 
+        overflow-y: auto;
         padding-right: 4px;
         -webkit-overflow-scrolling: touch;
     }
@@ -109,7 +109,7 @@
             flex: none;
         }
     }
-    
+
     .tab-panel::-webkit-scrollbar { width: 4px; }
     .tab-panel::-webkit-scrollbar-track { background: transparent; }
     .tab-panel::-webkit-scrollbar-thumb { background: var(--line); border-radius: 4px; }
@@ -120,7 +120,7 @@
 
     input[type=range] { width: 100%; cursor: pointer; accent-color: var(--accent); height:14px; }
     input[type=color] { width: 30px; height: 22px; border:none; padding:0; background:none; cursor:pointer; border-radius:5px; }
-    select, input[type=text], input[type=number] {
+    select, input[type=text], input[type=number], input[type=password] {
         background: var(--panel-2); color: var(--text); border: 1px solid var(--line);
         border-radius: var(--radius-sm); padding: 6px; font-size: 11.5px; width: 100%;
         font-family: inherit;
@@ -380,6 +380,13 @@
 
     <div class="tab-panel" id="tab-ara">
         <div class="card">
+            <label for="os-api-key" data-i18n="os_api_key_label">OpenSubtitles API key</label>
+            <input type="password" id="os-api-key" autocomplete="off" spellcheck="false" maxlength="200">
+            <button id="os-api-key-save" class="btn-grey" data-i18n="os_api_key_save">Save API key</button>
+            <div class="hint" data-i18n="os_api_key_hint">Required for online search. Stored only in this browser and sent only to OpenSubtitles.</div>
+            <a href="https://www.opensubtitles.com/consumers" target="_blank" rel="noopener noreferrer" class="hint" data-i18n="os_api_key_get">Get an OpenSubtitles API key</a>
+        </div>
+        <div class="card">
             <span class="label-only" data-i18n="search_card_label">Search OpenSubtitles</span>
             <input type="text" id="search-query" data-i18n-placeholder="search_placeholder" placeholder="Movie / show title…">
             <select id="search-lang">
@@ -434,6 +441,7 @@
     </div>
 
     <script src="i18n.js"></script>
+    <script src="settings.js"></script>
     <script src="popup.js"></script>
 </body>
 </html>

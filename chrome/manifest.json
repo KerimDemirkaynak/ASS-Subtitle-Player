@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "ASS Subtitle Player",
-  "version": "2.3.4",
-  "description": "Play local/searched .ass, .ssa and .srt subtitles on YouTube, Netflix, Crunchyroll and any web video. Real-time sync, FPS conversion, dual subtitles, drag positioning, OpenSubtitles search and more.",
+  "version": "2.3.5",
+  "description": "Play ASS, SSA and SRT subtitles on web videos with dual subtitles, sync controls, custom styles and OpenSubtitles search.",
   "permissions": [
     "activeTab",
     "scripting",
@@ -38,9 +38,12 @@
       "all_frames": true,
       "js": [
         "i18n.js",
+        "settings.js",
         "content.js"
       ],
-      "run_at": "document_start"
+      "run_at": "document_start",
+      "match_about_blank": true,
+      "match_origin_as_fallback": true
     }
   ]
 }
