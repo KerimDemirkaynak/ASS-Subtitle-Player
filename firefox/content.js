@@ -1,53 +1,15 @@
 // =========================================================================
-// ASS Subtitle Player - content.js (v2.1.3 Stable Reset Fix)
+// ASS Subtitle Player - content.js (v2.3.5)
 // =========================================================================
 
-const DEFAULTS = {
-    isEnabled: true,
-    aspectMode: "auto",      // 'auto' | '16:9' | '4:3' | 'vertical'
-    subSize: 100,            // %
-    subOpacity: 100,         // %
-    subColor: "#ffffff",
-    borderColor: "#000000",
-    borderWidth: 2,          // px
-    shadowLevel: "normal",   // 'none' | 'normal' | 'strong'
-    subFont: "sans-serif",
-    edgeBottom: 12,          // % - distance from bottom
-    posOffsetX: 0,           // px - drag offset
-    posOffsetY: 0,           // px
-    dragMode: false,
-    delaySeconds: 0,
-    dualEnabled: true,
-    subColor2: "#ffd400",
-    subSize2: 80,
-    subOpacity2: 100,        // % - secondary opacity
-    subFont2: "",            // empty = inherit primary font
-    borderColor2: "#000000",
-    borderWidth2: 2,         // px
-    shadowLevel2: "normal",  // 'none' | 'normal' | 'strong'
-    dualGap: 8,              // px - extra gap between primary and secondary
-    autoRestoreLastSubtitle: false,  // Default to false so switching videos doesn't auto play old subs
-    positionTop: false,
-    lastSubtitle: null,      
-    lastSubtitle2: null,
-    syncProfiles: { tv: null, bluray: null },
-    siteProfiles: {},
-    uiLang: "en"
-};
-
-const SITE_PRESETS = {
-    "youtube.com":      { subSize: 100, subColor: "#ffffff", subFont: "Roboto, sans-serif", edgeBottom: 10 },
-    "netflix.com":      { subSize: 100, subColor: "#ffffff", subFont: "sans-serif", edgeBottom: 12 },
-    "crunchyroll.com":  { subSize: 115, subColor: "#ffd400", subFont: "Arial, sans-serif", edgeBottom: 12 },
-    "twitch.tv":        { subSize: 90,  subColor: "#ffffff", subFont: "sans-serif", edgeBottom: 14 },
-    "vimeo.com":        { subSize: 100, subColor: "#ffffff", subFont: "sans-serif", edgeBottom: 12 }
-};
-
-let settings = JSON.parse(JSON.stringify(DEFAULTS));
+const DEFAULTS = ASS_DEFAULTS;
+let settings = resolveSubtitleSettings({}, location.hostname);
+let storedSettings = {};
+let pageHostname = subtitleHostname(location.hostname);
 
 let activeVideo = null;
-let customSubContainer = null;   
-let customSubContainer2 = null;  
+let customSubContainer = null;
+let customSubContainer2 = null;
 let parsedSubtitles = [];
 let parsedSubtitles2 = [];
 let syncAnimationId = null;
@@ -58,88 +20,63 @@ let playResX2 = 384, playResY2 = 288;   // ASS PlayRes for secondary
 
 function tr(key, vars) { return i18nText(key, settings.uiLang, vars); }
 
+function applySitePreset() {
+    settings = resolveSubtitleSettings(storedSettings, pageHostname);
+}
+
 function loadSettings(callback) {
     chrome.storage.local.get(Object.keys(DEFAULTS), (data) => {
-        settings = Object.assign({}, DEFAULTS, data);
+        storedSettings = data;
         applySitePreset();
         if (callback) callback();
     });
 }
 
-function applySitePreset() {
-    const host = location.hostname.replace(/^www\./, "");
-    const presetKey = Object.keys(SITE_PRESETS).find(k => host.endsWith(k));
-    const userOverride = settings.siteProfiles && settings.siteProfiles[host];
-    if (userOverride) {
-        Object.assign(settings, userOverride);
-    } else if (presetKey && !settings._userTouchedStyle) {
-        Object.assign(settings, SITE_PRESETS[presetKey]);
-    }
-}
-
 chrome.storage.onChanged.addListener((changes, area) => {
     if (area !== "local") return;
-    let styleTouched = false;
-    let removedAny = false;
-    Object.keys(changes).forEach(key => {
-        if (key in DEFAULTS) {
-            const nv = changes[key].newValue;
-            if (nv === undefined) {
-                // Key was deleted (e.g. "Reset all settings") -> back to its default
-                settings[key] = JSON.parse(JSON.stringify(DEFAULTS[key]));
-                removedAny = true;
-            } else {
-                settings[key] = nv;
-            }
-            if (["subSize","subOpacity","subColor","borderColor","borderWidth",
-                 "shadowLevel","subFont","edgeBottom","aspectMode","positionTop",
-                 "subColor2","subSize2","subOpacity2","subFont2","borderColor2",
-                 "borderWidth2","shadowLevel2","dualGap"].includes(key)) {
-                styleTouched = true;
-            }
-        }
-    });
-    if (removedAny) {
-        settings._userTouchedStyle = false;
-        applySitePreset();
-        styleTouched = true;
+    for (const [key, change] of Object.entries(changes)) {
+        if (!(key in DEFAULTS)) continue;
+        if (change.newValue === undefined) delete storedSettings[key];
+        else storedSettings[key] = change.newValue;
+        if (key === "lastSubtitle" && change.newValue === undefined) parsedSubtitles = [];
+        if (key === "lastSubtitle2" && change.newValue === undefined) parsedSubtitles2 = [];
     }
-    if (styleTouched) { updateSubStyle(); updateSubStyle2(); }
+    applySitePreset();
+    updateSubStyle();
+    updateSubStyle2();
 });
 
-loadSettings();
+loadSettings(tryInitialAutoRestore);
+// Use the top page's host for saved profiles even when the player is cross-origin.
+chrome.runtime.sendMessage({ type: "GET_SITE_HOST" }, (res) => {
+    if (chrome.runtime.lastError || !res || !res.hostname) return;
+    pageHostname = res.hostname;
+    applySitePreset();
+});
 
 // Runs fn and tells the popup it worked ({ok:true}) or really failed (E104).
 // Only the frame that owns the <video> answers, so empty frames can never
-// produce a false error. alwaysRun=true keeps the old behaviour of running fn
-// in every frame (frames without a video just stay silent).
-function runAndAck(sendResponse, fn, alwaysRun) {
-    const hasVideo = !!document.querySelector("video");
-    if (!hasVideo && !alwaysRun) return;
-    let err = null;
-    try { fn(); } catch (e) { err = e; }
-    if (!hasVideo) return;
-    try {
-        sendResponse(err
-            ? { ok: false, code: "E104", detail: String((err && err.message) || err).slice(0, 120) }
-            : { ok: true });
-    } catch (e) { /* popup already gone */ }
+// produce a false error. Async actions acknowledge only after they finish.
+function runAndAck(sendResponse, fn) {
+    if (!getActiveVideo()) return;
+    Promise.resolve().then(fn).then(
+        () => sendResponse({ ok: true }),
+        err => sendResponse({ ok: false, code: "E104", detail: String(err.message || err).slice(0, 160) })
+    );
+    return true;
 }
 
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     switch (request.type) {
         case "SHOW_PICKER_UI":
-            if (document.querySelector("video")) {
-                runAndAck(sendResponse, () => openPicker(request.target || "primary"));
-            }
-            break;
+            return runAndAck(sendResponse, () => openPicker(request.target || "primary"));
         case "SHOW_PICKER_TOP": {
             // Asked (via background) by a video iframe to show the picker in the top page
             if (window !== window.top) break;
             const fsEl = getFullscreenElement();
             if (fsEl && /^(IFRAME|VIDEO)$/i.test(fsEl.tagName)) { sendResponse({ ok: false }); break; }
             try {
-                injectFilePickerUI(request.target || "primary");
+                injectFilePickerUI(request.target || "primary", request.sourceFrameId);
                 sendResponse({ ok: true });
             } catch (e) { sendResponse({ ok: false }); }
             break;
@@ -157,7 +94,6 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
             break;
         case "STYLE_UPDATE":
             Object.assign(settings, request.patch);
-            settings._userTouchedStyle = true;
             updateSubStyle();
             updateSubStyle2();
             break;
@@ -172,41 +108,38 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
             settings.delaySeconds = request.value;
             break;
         case "BAKE_DELAY":
-            bakeDelay();
-            break;
+            return runAndAck(sendResponse, () => bakeDelay(request.value));
         case "RESET_DELAY":
             settings.delaySeconds = 0;
             break;
         case "CONVERT_FPS":
-            convertFps(request.fromFps, request.toFps);
-            break;
+            return runAndAck(sendResponse, () => convertFps(request.fromFps, request.toFps));
         case "TOGGLE_DUAL":
             settings.dualEnabled = request.dualEnabled;
             if (!settings.dualEnabled && customSubContainer2) customSubContainer2.style.display = "none";
             break;
         case "LOAD_SUBTITLE_TEXT":
-            loadSubtitleFromText(request.text, request.ext, request.name, request.target || "primary");
-            break;
+            return runAndAck(sendResponse, () => loadSubtitleFromText(request.text, request.ext, request.name, request.target || "primary"));
         case "LOAD_LAST_SUBTITLE":
-            runAndAck(sendResponse, () => restoreLastSubtitle(request.target || "primary"), true);
-            break;
+            return runAndAck(sendResponse, () => restoreLastSubtitle(request.target || "primary"));
         case "START_AUTO_SYNC":
-            runAndAck(sendResponse, () => startAutoSyncEstimate(), true);
-            break;
+            return runAndAck(sendResponse, () => startAutoSyncEstimate());
         case "SET_LANG":
             settings.uiLang = request.lang === "tr" ? "tr" : "en";
-            chrome.storage.local.set({ uiLang: settings.uiLang });
             break;
         case "GET_STATE":
             sendResponse({
-                hasVideo: !!document.querySelector("video"),
+                hasVideo: !!getActiveVideo(),
                 primaryLoaded: parsedSubtitles.length > 0,
                 secondaryLoaded: parsedSubtitles2.length > 0,
                 delaySeconds: settings.delaySeconds,
-                hostname: location.hostname.replace(/^www\./, "")
+                hostname: pageHostname,
+                settings
             });
             break;
+        default: return;
     }
+    if (request.type !== "GET_STATE" && request.type !== "SHOW_PICKER_TOP") sendResponse({ ok: true });
 });
 
 function getFullscreenElement() {
@@ -217,7 +150,8 @@ function getFullscreenElement() {
 function ensureContainerParent(container) {
     if (!container) return;
     const fsEl = getFullscreenElement();
-    const desiredParent = fsEl || document.body;
+    const desiredParent = (fsEl && !/^(VIDEO|IFRAME)$/i.test(fsEl.tagName))
+        ? fsEl : (document.body || document.documentElement);
     if (container.parentNode !== desiredParent) {
         try { desiredParent.appendChild(container); } catch (e) { /* ignore */ }
     }
@@ -236,7 +170,7 @@ function ensureContainerParent(container) {
 
 // ---- Toast: only show in the frame that actually owns the video ----
 function isMainVideoFrame() {
-    return !!document.querySelector("video");
+    return !!getActiveVideo();
 }
 
 function showToast(msg) {
@@ -264,12 +198,12 @@ function showToast(msg) {
             border: 1px solid #388e3c;
             text-align: center;
         `;
-        document.body.appendChild(toast);
+        (document.body || document.documentElement).appendChild(toast);
     }
-    
+
     ensureContainerParent(toast);
     toast.innerText = msg;
-    
+
     if (activeVideo) {
         const rect = getVideoContentRect(activeVideo);
         const centerX = rect.left + rect.width / 2;
@@ -293,17 +227,31 @@ function showToast(msg) {
 // Show the file picker in the TOP page (top-right of the browser viewport) instead of
 // inside a small video iframe. If we are the top frame, or this frame is fullscreen
 // (only its own content is visible then), or the relay fails, show it right here.
-function openPicker(target) {
-    const showHere = () => injectFilePickerUI(target);
-    if (window === window.top || getFullscreenElement()) { showHere(); return; }
-    try {
-        chrome.runtime.sendMessage({ type: "OPEN_PICKER_TOP", target }, (res) => {
-            if (chrome.runtime.lastError || !res || !res.ok) showHere();
-        });
-    } catch (e) { showHere(); }
+async function openPicker(target) {
+    const fullscreen = getFullscreenElement();
+    if (fullscreen && /^(VIDEO|IFRAME)$/i.test(fullscreen.tagName) && document.exitFullscreen) {
+        await document.exitFullscreen();
+    }
+    if (window === window.top || getFullscreenElement()) { injectFilePickerUI(target); return; }
+    const res = await chrome.runtime.sendMessage({ type: "OPEN_PICKER_TOP", target }).catch(() => null);
+    if (!res || !res.ok) injectFilePickerUI(target);
 }
 
-function injectFilePickerUI(target) {
+function decodeSubtitleBytes(buffer) {
+    const bytes = new Uint8Array(buffer);
+    if (bytes[0] === 0xff && bytes[1] === 0xfe) return new TextDecoder("utf-16le").decode(bytes);
+    if (bytes[0] === 0xfe && bytes[1] === 0xff) return new TextDecoder("utf-16be").decode(bytes);
+    try { return new TextDecoder("utf-8", { fatal: true }).decode(bytes); }
+    catch (_) { return new TextDecoder("windows-1254").decode(bytes); }
+}
+
+async function readSubtitleFile(file) {
+    if (!file || !/\.(ass|ssa|srt)$/i.test(file.name)) throw new Error(tr("subtitle_invalid_file"));
+    if (file.size > 20 * 1024 * 1024) throw new Error(tr("subtitle_too_large"));
+    return decodeSubtitleBytes(await file.arrayBuffer());
+}
+
+function injectFilePickerUI(target, sourceFrameId) {
     let existing = document.getElementById("ass-ext-floating-picker");
     if (existing) existing.remove();
 
@@ -348,23 +296,22 @@ function injectFilePickerUI(target) {
     closeBtn.style.cssText = "background: #d32f2f; color: white; border: none; padding: 6px; border-radius: 4px; cursor: pointer; font-weight: bold; margin-top: 5px;";
     closeBtn.onclick = () => host.remove();
 
-    const handleFile = (file) => {
+    const errorLabel = document.createElement("div");
+    errorLabel.style.cssText = "color:#ff8a80;font-size:12px;white-space:pre-wrap;";
+    const handleFile = async (file) => {
         if (!file) return;
-        const extension = file.name.split(".").pop().toLowerCase();
-        const reader = new FileReader();
-        reader.onload = (event) => {
-            if (document.querySelector("video")) {
-                loadSubtitleFromText(event.target.result, extension, file.name, target);
-            } else {
-                // This (top) frame has no video: let the background hand the text to the video frame
-                try {
-                    chrome.runtime.sendMessage({ type: "RELAY_SUBTITLE", text: event.target.result, ext: extension, name: file.name, target });
-                } catch (e) { /* ignore */ }
+        fileInput.disabled = true;
+        try {
+            const text = await readSubtitleFile(file);
+            const ext = file.name.split(".").pop().toLowerCase();
+            if (sourceFrameId === undefined && getActiveVideo()) loadSubtitleFromText(text, ext, file.name, target);
+            else {
+                const response = await chrome.runtime.sendMessage({ type: "RELAY_SUBTITLE", text, ext, name: file.name, target, sourceFrameId });
+                if (!response || !response.ok) throw new Error(response?.detail || tr("subtitle_load_failed"));
             }
             host.remove();
-        };
-        const encoding = (extension === "srt") ? "utf-8" : "windows-1254";
-        reader.readAsText(file, encoding);
+        } catch (error) { errorLabel.textContent = error.message; }
+        finally { fileInput.disabled = false; fileInput.value = ""; }
     };
 
     fileInput.onchange = (e) => handleFile(e.target.files[0]);
@@ -373,6 +320,7 @@ function injectFilePickerUI(target) {
     container.addEventListener("dragleave", () => { container.style.borderColor = "#3a3a3a"; });
     container.addEventListener("drop", (e) => {
         e.preventDefault();
+        e.stopPropagation();
         container.style.borderColor = "#3a3a3a";
         if (e.dataTransfer.files && e.dataTransfer.files[0]) handleFile(e.dataTransfer.files[0]);
     });
@@ -380,6 +328,7 @@ function injectFilePickerUI(target) {
     container.appendChild(title);
     container.appendChild(dropHint);
     container.appendChild(fileInput);
+    container.appendChild(errorLabel);
     container.appendChild(closeBtn);
     shadow.appendChild(container);
     const fsHost = getFullscreenElement();
@@ -388,47 +337,56 @@ function injectFilePickerUI(target) {
 }
 
 document.addEventListener("dragover", (e) => {
-    if (document.querySelector("video")) e.preventDefault();
+    if (settings.isEnabled && getActiveVideo() && Array.from(e.dataTransfer?.types || []).includes("Files")) e.preventDefault();
 });
-document.addEventListener("drop", (e) => {
-    if (!document.querySelector("video")) return;
-    if (document.getElementById("ass-ext-floating-picker")) return; 
+document.addEventListener("drop", async (e) => {
+    if (!settings.isEnabled || !getActiveVideo()) return;
+    if (document.getElementById("ass-ext-floating-picker")) return;
     const file = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
     if (!file) return;
     const ext = file.name.split(".").pop().toLowerCase();
     if (!["ass","ssa","srt"].includes(ext)) return;
     e.preventDefault();
-    const reader = new FileReader();
-    reader.onload = (event) => loadSubtitleFromText(event.target.result, ext, file.name, "primary");
-    reader.readAsText(file, ext === "srt" ? "utf-8" : "windows-1254");
+    try { loadSubtitleFromText(await readSubtitleFile(file), ext, file.name, "primary"); }
+    catch (error) { showToast(error.message); }
 });
 
-function loadSubtitleFromText(text, extension, name, target) {
+function loadSubtitleFromText(text, extension, name, target, restored) {
+    if (typeof text !== "string" || !["ass", "ssa", "srt"].includes(extension)) throw new Error(tr("subtitle_invalid_file"));
+    if (text.length > 20 * 1024 * 1024) throw new Error(tr("subtitle_too_large"));
     let subs;
+    let resX = 384, resY = 288;
     if (extension === "srt") {
         subs = parseSRT(text);
     } else {
         const result = parseASS(text);
         subs = result.subs;
-        if (target === "secondary") {
-            playResX2 = result.resX;
-            playResY2 = result.resY;
-        } else {
-            playResX = result.resX;
-            playResY = result.resY;
-        }
+        resX = result.resX;
+        resY = result.resY;
     }
-    if (subs.length === 0) return;
+    if (subs.length === 0) throw new Error(tr("subtitle_no_cues"));
+    stopAutoSync();
+    const timing = { scale: 1, offset: 0, ...restored?.timing };
+    if (!(timing.scale > 0) || !Number.isFinite(timing.scale) || !Number.isFinite(timing.offset)) throw new Error(tr("subtitle_load_failed"));
+    subs.forEach(c => { c.start = c.start * timing.scale + timing.offset; c.end = c.end * timing.scale + timing.offset; });
+    const stored = { name, ext: extension, content: text, timing };
 
     if (target === "secondary") {
         parsedSubtitles2 = subs;
-        settings.lastSubtitle2 = { name, ext: extension, content: text };
+        playResX2 = resX; playResY2 = resY;
+        settings.lastSubtitle2 = stored;
         chrome.storage.local.set({ lastSubtitle2: settings.lastSubtitle2 });
         showToast(tr("toast_sub_loaded_sec"));
     } else {
         parsedSubtitles = subs;
-        settings.delaySeconds = 0;
-        settings.lastSubtitle = { name, ext: extension, content: text };
+        playResX = resX; playResY = resY;
+        lastPrimaryRenderedHeight = 0;
+        if (!restored) {
+            settings.delaySeconds = 0;
+            chrome.storage.local.set({ delaySeconds: 0 });
+            broadcastDelay();
+        }
+        settings.lastSubtitle = stored;
         chrome.storage.local.set({ lastSubtitle: settings.lastSubtitle });
         showToast(tr("toast_sub_loaded"));
     }
@@ -442,176 +400,128 @@ function loadSubtitleFromText(text, extension, name, target) {
 
 function restoreLastSubtitle(target) {
     const stored = target === "secondary" ? settings.lastSubtitle2 : settings.lastSubtitle;
-    if (!stored) return;
-    loadSubtitleFromText(stored.content, stored.ext, stored.name, target);
+    if (!stored) throw new Error(tr("subtitle_no_saved"));
+    loadSubtitleFromText(stored.content, stored.ext, stored.name, target, stored);
+}
+
+function normalizeSubtitleLines(text) {
+    return String(text || "").replace(/^\uFEFF/, "").replace(/\r\n?/g, "\n");
+}
+
+function subtitleTime(value) {
+    const match = String(value).trim().match(/^(\d+):([0-5]\d):([0-5]\d)(?:[.,](\d{1,3}))?$/);
+    if (!match) return NaN;
+    return Number(match[1]) * 3600 + Number(match[2]) * 60 + Number(match[3]) + Number("0." + (match[4] || "0"));
+}
+
+function validSortedCues(cues) {
+    return cues.filter(c => Number.isFinite(c.start) && Number.isFinite(c.end) && c.end > c.start && c.text.trim())
+        .sort((a, b) => a.start - b.start);
 }
 
 function parseSRT(data) {
     const subs = [];
-    const blocks = data.trim().split(/\r?\n\r?\n/);
-    const tToS = (t) => {
-        const p = t.trim().replace(",", ".").split(":");
-        return (parseFloat(p[0]) * 3600) + (parseFloat(p[1]) * 60) + parseFloat(p[2]);
-    };
-    blocks.forEach(block => {
-        const lines = block.split(/\r?\n/);
-        if (lines.length >= 3) {
-            const timeRange = lines[1].split(" --> ");
-            if (timeRange.length === 2) {
-                subs.push({ start: tToS(timeRange[0]), end: tToS(timeRange[1]), text: lines.slice(2).join("\n").trim() });
-            }
-        }
-    });
-    return subs;
+    const blocks = normalizeSubtitleLines(data).trim().split(/\n[\t ]*\n+/);
+    for (const block of blocks) {
+        const lines = block.split("\n");
+        const index = lines.findIndex(line => line.includes("-->"));
+        if (index < 0) continue;
+        const times = lines[index].match(/^\s*(\d+:\d{2}:\d{2}[.,]\d{1,3})\s*-->\s*(\d+:\d{2}:\d{2}[.,]\d{1,3})(?:\s+.*)?$/);
+        if (!times) continue;
+        subs.push({ start: subtitleTime(times[1]), end: subtitleTime(times[2]), text: lines.slice(index + 1).join("\n").trim() });
+    }
+    return validSortedCues(subs);
 }
 
-// Convert supported ASS override tags to HTML, strip unsupported ones
+function escapeSubtitleHTML(text) {
+    return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+// Emit balanced, sanitized inline markup per text run. Overrides never become raw HTML.
 function convertASSFormattingToHTML(text) {
-    let result = text.replace(/\{([^}]*)\}/g, (_match, content) => {
-        let html = "";
-
-        // Bold: \b1 = on, \b0 = off (but not \b100 etc. which are font weights)
-        if (/\\b1(?!\d)/.test(content)) html += "<b>";
-        if (/\\b0(?!\d)/.test(content)) html += "</b>";
-
-        // Italic: \i1 = on, \i0 = off
-        if (/\\i1(?!\d)/.test(content)) html += "<i>";
-        if (/\\i0(?!\d)/.test(content)) html += "</i>";
-
-        // Underline: \u1 = on, \u0 = off
-        if (/\\u1(?!\d)/.test(content)) html += "<u>";
-        if (/\\u0(?!\d)/.test(content)) html += "</u>";
-
-        // Strikethrough: \s1 = on, \s0 = off
-        if (/\\s1(?!\d)/.test(content)) html += "<s>";
-        if (/\\s0(?!\d)/.test(content)) html += "</s>";
-
-        // Color: \c&H[AA]BBGGRR& or \1c&H[AA]BBGGRR& (ASS uses BGR order)
-        const colorMatch = content.match(/\\1?c\s*&H([0-9A-Fa-f]+)&/);
-        if (colorMatch) {
-            const hex = colorMatch[1];
-            if (hex.length >= 6) {
-                // Take last 6 chars as BBGGRR (skip optional alpha prefix)
-                const tail = hex.slice(-6);
-                const r = tail.substring(4, 6), g = tail.substring(2, 4), b = tail.substring(0, 2);
-                html += `<font color="#${r}${g}${b}">`;
+    const state = { b: false, i: false, u: false, s: false, color: null, drawing: false };
+    const result = [];
+    for (const part of text.split(/(\{[^}]*\})/g)) {
+        if (part.startsWith("{") && part.endsWith("}")) {
+            // Transform tags contain nested overrides that must not affect the whole line.
+            const overrides = part.slice(1, -1).replace(/\\t\([^)]*\)/gi, "");
+            for (const token of overrides.match(/\\[^\\]+/g) || []) {
+                let m;
+                if ((m = token.match(/^\\([bius])(-?\d+)\s*$/i))) {
+                    state[m[1].toLowerCase()] = Number(m[2]) !== 0;
+                } else if ((m = token.match(/^\\(?:1?c)(?:\s*&H([0-9a-f]{1,8})&?)?\s*$/i))) {
+                    if (m[1]) {
+                        const hex = m[1].padStart(6, "0").slice(-6);
+                        state.color = "#" + hex.slice(4, 6) + hex.slice(2, 4) + hex.slice(0, 2);
+                    } else state.color = null;
+                } else if ((m = token.match(/^\\p(\d+)\s*$/i))) state.drawing = Number(m[1]) > 0;
+                else if (/^\\r/i.test(token)) Object.assign(state, { b: false, i: false, u: false, s: false, color: null });
             }
+            continue;
         }
-
-        return html;
-    });
-
-    // Convert \N (hard) and \n (soft) line breaks to newlines
-    result = result.replace(/\\[Nn]/g, "\n");
-
-    return result.trim();
+        if (!part || state.drawing) continue;
+        let html = escapeSubtitleHTML(part).replace(/\\[Nn]/g, "\n").replace(/\\h/g, "\u00a0");
+        for (const tag of ["s", "u", "i", "b"]) if (state[tag]) html = `<${tag}>${html}</${tag}>`;
+        if (state.color) html = `<font color="${state.color}">${html}</font>`;
+        result.push(html);
+    }
+    return result.join("").trim();
 }
 
 function parseASS(assText) {
-    const lines = assText.split("\n");
-    let subs = [];
-    let resX = 384, resY = 288; // ASS spec defaults
-    let foundResX = false, foundResY = false;
-    const styles = {};           // styleName -> { alignment }
-    let styleFormatFields = [];  // column order from Style Format line
-    let currentSection = "";
-    const tToS = (t) => {
-        const p = t.trim().split(":");
-        return p.length < 3 ? 0 : (parseFloat(p[0]) * 3600) + (parseFloat(p[1]) * 60) + parseFloat(p[2]);
-    };
-    // Map legacy SSA \a values to ASS \an values
-    const ssaToAn = { 1:1, 2:2, 3:3, 5:7, 6:8, 7:9, 9:4, 10:5, 11:6 };
-
-    lines.forEach(line => {
+    let resX = 384, resY = 288, foundResX = false, foundResY = false;
+    const styles = Object.create(null), subs = [];
+    let styleFormat = [], eventFormat = ["layer", "start", "end", "style", "name", "marginl", "marginr", "marginv", "effect", "text"];
+    let section = "";
+    const ssaToAn = { 1: 1, 2: 2, 3: 3, 5: 7, 6: 8, 7: 9, 9: 4, 10: 5, 11: 6 };
+    for (const line of normalizeSubtitleLines(assText).split("\n")) {
         const trimmed = line.trim();
-
-        // Track which section we're in
-        if (trimmed.startsWith("[")) {
-            currentSection = trimmed.toLowerCase();
-            return;
+        if (trimmed.startsWith("[")) { section = trimmed.toLowerCase(); continue; }
+        let match;
+        if (section === "[script info]") {
+            if ((match = trimmed.match(/^PlayResX\s*:\s*(\d+)/i))) { resX = Number(match[1]); foundResX = resX > 0; }
+            if ((match = trimmed.match(/^PlayResY\s*:\s*(\d+)/i))) { resY = Number(match[1]); foundResY = resY > 0; }
         }
-
-        // [Script Info] - PlayResX / PlayResY
-        const resXMatch = trimmed.match(/^PlayResX\s*:\s*(\d+)/i);
-        if (resXMatch) { resX = parseInt(resXMatch[1], 10); foundResX = true; return; }
-        const resYMatch = trimmed.match(/^PlayResY\s*:\s*(\d+)/i);
-        if (resYMatch) { resY = parseInt(resYMatch[1], 10); foundResY = true; return; }
-
-        // [V4+ Styles] or [V4 Styles] - parse Format and Style lines
-        if (currentSection.includes("styles")) {
-            if (trimmed.startsWith("Format:")) {
-                styleFormatFields = trimmed.substring(7).split(",").map(s => s.trim().toLowerCase());
-                return;
-            }
-            if (trimmed.startsWith("Style:")) {
-                const values = trimmed.substring(6).split(",").map(s => s.trim());
-                const nameIdx = styleFormatFields.indexOf("name");
-                const alignIdx = styleFormatFields.indexOf("alignment");
-                const fsIdx = styleFormatFields.indexOf("fontsize");
-                const isLegacySSA = currentSection.includes("v4 styles") && !currentSection.includes("v4+");
-                if (nameIdx >= 0 && nameIdx < values.length) {
-                    let styleAlign = (alignIdx >= 0 && alignIdx < values.length)
-                        ? parseInt(values[alignIdx], 10) || 2
-                        : 2;
-                    if (isLegacySSA) styleAlign = ssaToAn[styleAlign] || 2;
-                    styles[values[nameIdx]] = {
-                        alignment: styleAlign,
-                        fontSize: (fsIdx >= 0 && fsIdx < values.length)
-                            ? (parseFloat(values[fsIdx]) || null)
-                            : null
-                    };
-                }
-                return;
+        if (section.includes("styles")) {
+            if (/^Format:/i.test(trimmed)) styleFormat = trimmed.slice(7).split(",").map(s => s.trim().toLowerCase());
+            if (/^Style:/i.test(trimmed)) {
+                const values = trimmed.slice(6).split(",").map(s => s.trim());
+                const get = key => values[styleFormat.indexOf(key)];
+                const rawAlignment = Number(get("alignment")) || 2;
+                styles[get("name")] = {
+                    alignment: section === "[v4 styles]" ? (ssaToAn[rawAlignment] || 2) : rawAlignment,
+                    fontSize: Number(get("fontsize")) || null
+                };
             }
         }
-
-        // Dialogue lines
-        if (trimmed.startsWith("Dialogue:")) {
-            const parts = trimmed.split(",");
-            if (parts.length >= 10) {
-                let text = parts.slice(9).join(",");
-                // Extract \pos(x,y) before stripping override tags
-                let pos = null;
-                const posMatch = text.match(/\\pos\s*\(\s*([\d.]+)\s*,\s*([\d.]+)\s*\)/);
-                if (posMatch) {
-                    pos = { x: parseFloat(posMatch[1]), y: parseFloat(posMatch[2]) };
-                }
-                // Extract alignment override: \an (ASS) or \a (SSA legacy)
-                let alignment = null;
-                const anMatch = text.match(/\\an\s*(\d+)/);
-                if (anMatch) {
-                    alignment = parseInt(anMatch[1], 10);
-                } else {
-                    const aMatch = text.match(/\\a\s*(\d+)/);
-                    if (aMatch) {
-                        alignment = ssaToAn[parseInt(aMatch[1], 10)] || 2;
-                    }
-                }
-                const styleName = parts[3] ? parts[3].trim() : "";
-                // Fall back to style's alignment, then default (2 = bottom-center)
-                if (alignment === null) {
-                    alignment = (styles[styleName] && styles[styleName].alignment) || 2;
-                }
-                // Font size in PlayRes units: \fs override first, else the style's Fontsize.
-                // (\fs followed directly by digits, so \fscx / \fsp are not matched)
-                let fontSize = null;
-                const fsMatch = text.match(/\\fs(\d+(?:\.\d+)?)/);
-                if (fsMatch) fontSize = parseFloat(fsMatch[1]);
-                else if (styles[styleName] && styles[styleName].fontSize) fontSize = styles[styleName].fontSize;
-
-                // Convert supported ASS formatting to HTML, strip unsupported tags
-                text = convertASSFormattingToHTML(text);
-                subs.push({ start: tToS(parts[1]), end: tToS(parts[2]), text, pos, alignment, fontSize });
-            }
-        }
-    });
-    // Only one PlayRes given: derive the other one the way libass does (4:3)
-    if (foundResX && !foundResY) resY = Math.round(resX * 3 / 4);
-    else if (foundResY && !foundResX) resX = Math.round(resY * 4 / 3);
-    // Guard against 0 / nonsense values so we never divide by zero later
-    if (!(resX > 0)) resX = 384;
-    if (!(resY > 0)) resY = 288;
-    return { subs, resX, resY };
+        if (section !== "[events]") continue;
+        if (/^Format:/i.test(trimmed)) { eventFormat = trimmed.slice(7).split(",").map(s => s.trim().toLowerCase()); continue; }
+        if (!/^Dialogue:/i.test(trimmed)) continue;
+        // Text is the final ASS field and may contain any number of commas.
+        const values = trimmed.slice(9).split(",");
+        if (values.length < eventFormat.length) continue;
+        const textIndex = eventFormat.indexOf("text");
+        if (textIndex !== eventFormat.length - 1) continue;
+        const get = key => (values[eventFormat.indexOf(key)] || "").trim();
+        const raw = values.slice(textIndex).join(",");
+        const tags = (raw.match(/\{[^}]*\}/g) || []).join("").replace(/\\t\([^)]*\)/gi, "");
+        const posMatch = tags.match(/\\pos\s*\(\s*([+-]?(?:\d*\.)?\d+)\s*,\s*([+-]?(?:\d*\.)?\d+)\s*\)/i);
+        const anMatch = tags.match(/\\an([1-9])(?!\d)/i), aMatch = tags.match(/\\a(\d+)(?!\d)/i);
+        const style = styles[get("style")] || {};
+        const alignment = anMatch ? Number(anMatch[1]) : (aMatch ? ssaToAn[Number(aMatch[1])] : style.alignment);
+        const fsMatch = tags.match(/\\fs(\d+(?:\.\d+)?)/i);
+        subs.push({
+            start: subtitleTime(get("start")), end: subtitleTime(get("end")),
+            text: convertASSFormattingToHTML(raw),
+            pos: posMatch ? { x: Number(posMatch[1]), y: Number(posMatch[2]) } : null,
+            alignment: alignment >= 1 && alignment <= 9 ? alignment : 2,
+            fontSize: fsMatch ? Number(fsMatch[1]) : (style.fontSize || null),
+            layer: Number(get("layer")) || 0
+        });
+    }
+    if (foundResX && !foundResY) resY = resX === 1280 ? 1024 : Math.round(resX * 3 / 4);
+    else if (foundResY && !foundResX) resX = resY === 1024 ? 1280 : Math.round(resY * 4 / 3);
+    return { subs: validSortedCues(subs), resX: resX > 0 ? resX : 384, resY: resY > 0 ? resY : 288 };
 }
 
 // Style one overlay entry (positioned / non-default alignment) like a real ASS renderer:
@@ -684,21 +594,33 @@ function adjustDelay(delta) {
     broadcastDelay();
 }
 
-function bakeDelay() {
-    const d = settings.delaySeconds;
-    if (d === 0) return;
-    parsedSubtitles.forEach(c => { c.start += d; c.end += d; });
-    parsedSubtitles2.forEach(c => { c.start += d; c.end += d; });
+function transformTimelines(factor, offset) {
+    const patch = {};
+    for (const [cues, key] of [[parsedSubtitles, "lastSubtitle"], [parsedSubtitles2, "lastSubtitle2"]]) {
+        if (!cues.length) continue;
+        cues.forEach(c => { c.start = c.start * factor + offset; c.end = c.end * factor + offset; });
+        cueIndexes.delete(cues);
+        const stored = settings[key];
+        if (stored) {
+            const old = { scale: 1, offset: 0, ...stored.timing };
+            settings[key] = { ...stored, timing: { scale: old.scale * factor, offset: old.offset * factor + offset } };
+            patch[key] = settings[key];
+        }
+    }
+    chrome.storage.local.set(patch);
+}
+
+function bakeDelay(value = settings.delaySeconds) {
+    if (!Number.isFinite(value)) throw new Error("Invalid delay.");
+    transformTimelines(1, value);
     settings.delaySeconds = 0;
     chrome.storage.local.set({ delaySeconds: 0 });
     broadcastDelay();
 }
 
 function convertFps(fromFps, toFps) {
-    if (!fromFps || !toFps || fromFps === toFps) return;
-    const factor = fromFps / toFps; 
-    parsedSubtitles.forEach(c => { c.start *= factor; c.end *= factor; });
-    parsedSubtitles2.forEach(c => { c.start *= factor; c.end *= factor; });
+    if (!(fromFps > 0) || !(toFps > 0) || !Number.isFinite(fromFps) || !Number.isFinite(toFps)) throw new Error("Invalid FPS.");
+    if (fromFps !== toFps) transformTimelines(fromFps / toFps, 0);
 }
 
 function broadcastDelay() {
@@ -706,8 +628,10 @@ function broadcastDelay() {
 }
 
 window.addEventListener("keydown", (e) => {
-    const tag = document.activeElement && document.activeElement.tagName;
-    if (tag === "INPUT" || tag === "TEXTAREA" || (document.activeElement && document.activeElement.isContentEditable)) return;
+    const focused = e.composedPath()[0] || document.activeElement;
+    const tag = focused && focused.tagName;
+    if (["INPUT", "TEXTAREA", "SELECT"].includes(tag) || focused?.isContentEditable) return;
+    if (!getActiveVideo() || e.ctrlKey || e.metaKey) return;
     if (!e.altKey) return;
 
     switch (e.code) {
@@ -716,55 +640,63 @@ window.addEventListener("keydown", (e) => {
         case "Digit0":     settings.delaySeconds = 0; chrome.storage.local.set({ delaySeconds: 0 }); broadcastDelay(); e.preventDefault(); break;
         case "KeyE":       settings.isEnabled = !settings.isEnabled; chrome.storage.local.set({ isEnabled: settings.isEnabled }); e.preventDefault(); break;
         case "KeyD":       settings.dualEnabled = !settings.dualEnabled; chrome.storage.local.set({ dualEnabled: settings.dualEnabled }); e.preventDefault(); break;
-        case "KeyP":       settings.dragMode = !settings.dragMode; updateSubStyle(); e.preventDefault(); break;
+        case "KeyP":       settings.dragMode = !settings.dragMode; chrome.storage.local.set({ dragMode: settings.dragMode }); updateSubStyle(); e.preventDefault(); break;
         case "KeyT":       settings.positionTop = !settings.positionTop; chrome.storage.local.set({ positionTop: settings.positionTop }); updateSubStyle(); e.preventDefault(); break;
     }
 });
 
 function getActiveVideo() {
-    const videos = Array.from(document.querySelectorAll("video"));
-    if (videos.length === 0) return null;
-    let best = null, bestArea = 0;
-    videos.forEach(v => {
-        const r = v.getBoundingClientRect();
-        const area = r.width * r.height;
-        if (area > bestArea && r.width > 0 && r.height > 0) { bestArea = area; best = v; }
-    });
-    return best || videos[0];
+    const videos = [];
+    const visit = root => {
+        videos.push(...root.querySelectorAll("video"));
+        for (const el of root.querySelectorAll("*")) if (el.shadowRoot) visit(el.shadowRoot);
+    };
+    visit(document);
+    let best = null, score = 0;
+    for (const v of videos) {
+        const r = v.getBoundingClientRect(), style = getComputedStyle(v);
+        const width = Math.max(0, Math.min(r.right, window.innerWidth) - Math.max(r.left, 0));
+        const height = Math.max(0, Math.min(r.bottom, window.innerHeight) - Math.max(r.top, 0));
+        if (style.visibility === "hidden" || style.display === "none" || Number(style.opacity) === 0) continue;
+        const fs = getFullscreenElement();
+        const area = width * height * (!v.paused && !v.ended ? 2 : 1) * (fs && (fs === v || fs.contains(v)) ? 4 : 1);
+        if (area > score) { best = v; score = area; }
+    }
+    return best;
 }
 
 let lastPageUrl = location.href;
+let lastVideoSource = "";
+function clearLoadedSubtitles() {
+    parsedSubtitles = []; parsedSubtitles2 = [];
+    lastPrimaryRenderedHeight = 0;
+    stopAutoSync();
+    renderEntries(customSubContainer, [], false);
+    renderEntries(customSubContainer2, [], true);
+}
 
 function watchForVideoChanges() {
     if (videoWatchTimer) clearInterval(videoWatchTimer);
     videoWatchTimer = setInterval(() => {
-        const v = getActiveVideo();
-        const currentUrl = location.href;
-
-        // SPA Navigation Fix: If URL changes (e.g. clicked a new YouTube video), clear subtitles
-        // if the user doesn't want them auto-restored. This is much safer than checking video.src.
-        if (currentUrl !== lastPageUrl) {
-            lastPageUrl = currentUrl;
-            if (!settings.autoRestoreLastSubtitle) {
-                parsedSubtitles = [];
-                parsedSubtitles2 = [];
-                if (customSubContainer) { customSubContainer.innerHTML = ""; customSubContainer.style.display = "none"; }
-                if (customSubContainer2) { customSubContainer2.innerHTML = ""; customSubContainer2.style.display = "none"; }
-            }
+        const v = getActiveVideo(), source = v?.currentSrc || "";
+        if (location.href !== lastPageUrl || (source && lastVideoSource && source !== lastVideoSource)) {
+            lastPageUrl = location.href;
+            if (!settings.autoRestoreLastSubtitle) clearLoadedSubtitles();
+            stopAutoSync();
         }
-
-        if (v && v !== activeVideo) {
+        lastVideoSource = source;
+        if (v !== activeVideo) {
+            stopAutoSync();
             activeVideo = v;
-            
-            if (parsedSubtitles.length > 0 || (settings.autoRestoreLastSubtitle && settings.lastSubtitle)) initContainer(v);
-            if (parsedSubtitles2.length > 0 || (settings.autoRestoreLastSubtitle && settings.lastSubtitle2)) initContainer2(v);
-            
-            if (parsedSubtitles.length === 0 && settings.autoRestoreLastSubtitle && settings.lastSubtitle) {
-                restoreLastSubtitle("primary");
+            if (v) {
+                tryInitialAutoRestore();
+                if (parsedSubtitles.length) initContainer(v);
+                if (parsedSubtitles2.length) initContainer2(v);
+                if (parsedSubtitles.length || parsedSubtitles2.length) ensureSyncLoop(v);
+            } else {
+                if (customSubContainer) customSubContainer.style.display = "none";
+                if (customSubContainer2) customSubContainer2.style.display = "none";
             }
-            ensureSyncLoop(v);
-        } else if (!v && activeVideo) {
-            activeVideo = null;
         }
     }, 800);
 }
@@ -772,28 +704,24 @@ watchForVideoChanges();
 
 function tryInitialAutoRestore() {
     const v = getActiveVideo();
-    if (v && settings.autoRestoreLastSubtitle && settings.lastSubtitle && parsedSubtitles.length === 0) {
-        activeVideo = v;
-        restoreLastSubtitle("primary");
-        if (settings.lastSubtitle2) restoreLastSubtitle("secondary");
+    if (!v || !settings.autoRestoreLastSubtitle) return;
+    activeVideo = v;
+    for (const [target, cues, stored] of [["primary", parsedSubtitles, settings.lastSubtitle], ["secondary", parsedSubtitles2, settings.lastSubtitle2]]) {
+        if (!cues.length && stored) {
+            try { restoreLastSubtitle(target); } catch (_) { /* Invalid saved files must not stop video discovery. */ }
+        }
     }
 }
-setTimeout(() => loadSettings(tryInitialAutoRestore), 600);
 
-function initContainer(videoElement) {
-    if (customSubContainer) customSubContainer.remove();
-    customSubContainer = document.createElement("div");
-    ensureContainerParent(customSubContainer);
-    enableDragHandlers(customSubContainer, "primary");
-    updateSubStyle();
-}
-
-function initContainer2(videoElement) {
-    if (customSubContainer2) customSubContainer2.remove();
-    customSubContainer2 = document.createElement("div");
-    ensureContainerParent(customSubContainer2);
-    updateSubStyle2();
-}
+window.addEventListener("pagehide", () => {
+    clearInterval(videoWatchTimer);
+    if (syncAnimationId) cancelAnimationFrame(syncAnimationId);
+    stopAutoSync();
+});
+window.addEventListener("pageshow", () => {
+    watchForVideoChanges();
+    if (activeVideo && (parsedSubtitles.length || parsedSubtitles2.length)) ensureSyncLoop(activeVideo);
+});
 
 // The old 4/8 integer-offset shadows left visible stair-steps (mobile AND desktop).
 // Use a round ring of sub-pixel offsets with a tiny blur so the outline is
@@ -822,10 +750,16 @@ function buildSmoothShadow(color, w, strong) {
     return parts.join(", ");
 }
 
+const textShadowCache = new Map();
 function buildTextShadow(borderColor, borderWidth, shadowLevel) {
-    if (shadowLevel === "none") return "none";
+    if (shadowLevel === "none" || !(borderWidth > 0)) return "none";
     const w = Math.max(1, borderWidth);
-    return buildSmoothShadow(borderColor, w, shadowLevel === "strong");
+    const key = `${borderColor}|${w}|${shadowLevel}`;
+    if (!textShadowCache.has(key)) {
+        if (textShadowCache.size >= 32) textShadowCache.delete(textShadowCache.keys().next().value);
+        textShadowCache.set(key, buildSmoothShadow(borderColor, w, shadowLevel === "strong"));
+    }
+    return textShadowCache.get(key);
 }
 
 // ---- Safe subtitle renderer (handles <i>, <b>, <u>, <s>, <font color>, \n) --------
@@ -878,18 +812,6 @@ function setSubText(container, text) {
 }
 
 
-// ---- Mobile Detection & Font Support -------------------------------------
-const isMobile = /Mobi|Android|iPhone|iPad/i.test(navigator.userAgent);
-
-if (isMobile) {
-    // Inject Google Fonts on mobile so that font selections actually render differently 
-    // (since Android/iOS lack fonts like Arial, Tahoma, etc. by default).
-    const fontLink = document.createElement("link");
-    fontLink.rel = "stylesheet";
-    fontLink.href = "https://fonts.googleapis.com/css2?family=Roboto:wght@700&family=Open+Sans:wght@700&family=Noto+Sans:wght@700&display=swap";
-    document.head.appendChild(fontLink);
-}
-
 // Returns the rectangle the video PICTURE actually occupies on screen.
 // <video>.getBoundingClientRect() is the element box, which is the whole player area:
 // with object-fit: contain (the default) a 16:9 video on a 20:9 phone screen or in a
@@ -902,8 +824,6 @@ function getVideoContentRect(video) {
 
     const cs = getComputedStyle(video);
     const fit = cs.objectFit || "fill";
-    if (fit === "fill" || fit === "cover") return r; // fill = stretched, cover = cropped to box
-
     // Content box = element box minus border and padding
     const pl = parseFloat(cs.paddingLeft) || 0, pr = parseFloat(cs.paddingRight) || 0;
     const pt = parseFloat(cs.paddingTop) || 0,  pb = parseFloat(cs.paddingBottom) || 0;
@@ -912,6 +832,10 @@ function getVideoContentRect(video) {
     const boxL = r.left + bl + pl, boxT = r.top + bt + pt;
     const boxW = r.width - bl - br - pl - pr, boxH = r.height - bt - bb - pt - pb;
     if (boxW <= 0 || boxH <= 0) return r;
+    if (fit === "fill" || fit === "cover") return {
+        left: boxL, top: boxT, width: boxW, height: boxH,
+        right: boxL + boxW, bottom: boxT + boxH, x: boxL, y: boxT
+    };
 
     let scale = Math.min(boxW / vw, boxH / vh);          // contain
     if (fit === "none") scale = 1;
@@ -922,6 +846,8 @@ function getVideoContentRect(video) {
     const pos = (cs.objectPosition || "50% 50%").split(/\s+/);
     const off = (token, free) => {
         if (!token) return free / 2;
+        if (token === "left" || token === "top") return 0;
+        if (token === "right" || token === "bottom") return free;
         if (token.endsWith("%")) return free * (parseFloat(token) / 100);
         const px = parseFloat(token);
         return isNaN(px) ? free / 2 : px;
@@ -941,301 +867,296 @@ function computeBoxRect() {
     return { rect, isVertical, maxWidthRatio };
 }
 
-function updateSubStyle() {
-    if (!customSubContainer) return;
-    const info = computeBoxRect();
-    if (!info) { customSubContainer.style.display = "none"; return; }
-    const { rect, maxWidthRatio } = info;
-
-    // Font size is based on the video picture width (not the viewport), so it is identical on any screen
-    const fontSize = `calc(clamp(14px, ${rect.width * 0.032}px, 58px) * ${settings.subSize / 100})`;
-    
-    const centerX = rect.left + rect.width / 2 + settings.posOffsetX;
-
-    let positionCss = "";
-    if (settings.positionTop) {
-        const topPx = rect.top + rect.height * (settings.edgeBottom / 100) - settings.posOffsetY;
-        positionCss = `top: ${topPx}px;`;
-    } else {
-        const bottomPx = rect.top + rect.height * (1 - settings.edgeBottom / 100) - settings.posOffsetY;
-        positionCss = `bottom: ${window.innerHeight - bottomPx}px;`;
+const cueIndexes = new WeakMap();
+function collectActiveEntries(cues, time) {
+    let ends = cueIndexes.get(cues);
+    if (!ends) {
+        let maxEnd = -Infinity;
+        ends = cues.map(c => (maxEnd = Math.max(maxEnd, c.end)));
+        cueIndexes.set(cues, ends);
     }
-
-    customSubContainer.style.cssText = `
-        position: fixed; left: ${centerX}px; ${positionCss}
-        transform: translateX(-50%); width: ${rect.width * maxWidthRatio}px; text-align: center;
-        pointer-events: ${settings.dragMode ? "auto" : "none"}; z-index: 2147483646;
-        font-family: ${settings.subFont}; font-size: ${fontSize}; font-weight: bold;
-        color: ${settings.subColor}; opacity: ${settings.subOpacity / 100};
-        text-shadow: ${buildTextShadow(settings.borderColor, settings.borderWidth, settings.shadowLevel)};
-        display: ${parsedSubtitles.length ? "block" : "none"}; white-space: pre-wrap; line-height: 1.25;
-        ${settings.dragMode ? "outline: 1px dashed #ffb300; cursor: grab; border-radius:4px;" : ""}
-    `;
+    let lo = 0, hi = cues.length;
+    while (lo < hi) {
+        const mid = (lo + hi) >>> 1;
+        if (cues[mid].start <= time) lo = mid + 1; else hi = mid;
+    }
+    const active = [];
+    for (let i = lo - 1; i >= 0 && ends[i] > time; i--) {
+        if (cues[i].end > time) active.push(cues[i]);
+    }
+    // ASS layers paint in ascending order; retain source order within a layer.
+    return active.reverse().sort((a, b) => (a.layer || 0) - (b.layer || 0));
 }
 
-function updateSubStyle2() {
-    if (!customSubContainer2) return;
-    const info = computeBoxRect();
-    if (!info) { customSubContainer2.style.display = "none"; return; }
-    const { rect, maxWidthRatio } = info;
-
-    // Font: use secondary-specific font if set, otherwise fall back to primary font
-    const font2 = (settings.subFont2 && settings.subFont2 !== "") ? settings.subFont2 : settings.subFont;
-    
-    // Font size based on the video picture width (not the viewport)
-    const fontSize2 = `calc(clamp(14px, ${rect.width * 0.032}px, 58px) * ${settings.subSize2 / 100})`;
-        
-    const centerX = rect.left + rect.width / 2;
-
-    // Use the REAL rendered height of the primary container when available.
-    // This correctly handles multi-line primary subtitles.
-    let primaryActualHeight;
-    if (customSubContainer && customSubContainer.style.display !== "none") {
-        const primaryBR = customSubContainer.getBoundingClientRect();
-        if (primaryBR.height > 0) {
-            lastPrimaryRenderedHeight = primaryBR.height;
-            primaryActualHeight = primaryBR.height;
-        }
-    }
-    // Fallback: use the cached last-known height so secondary doesn't jump
-    // when the primary disappears between subtitle cues.
-    if (!primaryActualHeight) {
-        if (lastPrimaryRenderedHeight > 0) {
-            primaryActualHeight = lastPrimaryRenderedHeight;
-        } else {
-            const primaryFontRefPx = Math.min(58, Math.max(14, rect.width * 0.032)) * (settings.subSize / 100);
-            primaryActualHeight = primaryFontRefPx * 1.35;
-        }
-    }
-
-    const gap = (settings.dualGap !== undefined ? settings.dualGap : 8);
-
-    let positionCss2 = "";
-    if (settings.positionTop) {
-        const primaryTopPx = rect.top + rect.height * (settings.edgeBottom / 100) - settings.posOffsetY;
-        const secondaryTopPx = primaryTopPx + primaryActualHeight + gap;
-        positionCss2 = `top: ${secondaryTopPx}px;`;
-    } else {
-        const primaryBottomPx = rect.top + rect.height * (1 - settings.edgeBottom / 100) - settings.posOffsetY;
-        const secondaryBottomPx = primaryBottomPx - primaryActualHeight - gap;
-        positionCss2 = `bottom: ${window.innerHeight - secondaryBottomPx}px;`;
-    }
-
-    customSubContainer2.style.cssText = `
-        position: fixed; left: ${centerX}px; ${positionCss2}
-        transform: translateX(-50%); width: ${rect.width * maxWidthRatio}px; text-align: center;
-        pointer-events: none; z-index: 2147483645;
-        font-family: ${font2}; font-size: ${fontSize2}; font-weight: bold;
-        color: ${settings.subColor2}; opacity: ${(settings.subOpacity2 !== undefined ? settings.subOpacity2 : 100) / 100};
-        text-shadow: ${buildTextShadow(settings.borderColor2 || "#000000", settings.borderWidth2 !== undefined ? settings.borderWidth2 : 2, settings.shadowLevel2 || "normal")};
-        display: ${(settings.dualEnabled && parsedSubtitles2.length) ? "block" : "none"};
-        white-space: pre-wrap; line-height: 1.25;
-    `;
+function makeSubtitleContainer(id, draggable) {
+    const container = document.createElement("div");
+    container.id = id;
+    const root = container.attachShadow({ mode: "open" });
+    const css = document.createElement("style");
+    css.textContent = "* { box-sizing: border-box; margin: 0; padding: 0; }";
+    const content = document.createElement("div");
+    root.append(css, content);
+    container._assContent = content;
+    if (draggable) enableDragHandlers(container);
+    return container;
 }
 
-function enableDragHandlers(container, target) {
-    let dragging = false, startX = 0, startY = 0, baseX = 0, baseY = 0;
-    container.addEventListener("mousedown", (e) => {
-        if (!settings.dragMode) return;
-        dragging = true;
-        startX = e.clientX; startY = e.clientY;
-        baseX = settings.posOffsetX; baseY = settings.posOffsetY;
+function initContainer(videoElement) {
+    activeVideo = videoElement;
+    if (!customSubContainer) customSubContainer = makeSubtitleContainer("ass-ext-primary", true);
+    ensureContainerParent(customSubContainer);
+    updateSubStyle();
+}
+
+function initContainer2(videoElement) {
+    activeVideo = videoElement;
+    if (!customSubContainer2) customSubContainer2 = makeSubtitleContainer("ass-ext-secondary", false);
+    ensureContainerParent(customSubContainer2);
+    updateSubStyle2();
+}
+
+function applyContainerStyle(container, secondary) {
+    if (!container) return;
+    const info = computeBoxRect();
+    if (!info) { container.style.display = "none"; return; }
+    const { rect, maxWidthRatio } = info;
+    const size = secondary ? settings.subSize2 : settings.subSize;
+    const font = secondary ? (settings.subFont2 || settings.subFont) : settings.subFont;
+    const opacity = secondary ? settings.subOpacity2 : settings.subOpacity;
+    const color = secondary ? settings.subColor2 : settings.subColor;
+    const outline = secondary ? settings.borderColor2 : settings.borderColor;
+    const width = secondary ? settings.borderWidth2 : settings.borderWidth;
+    const shadow = secondary ? settings.shadowLevel2 : settings.shadowLevel;
+    const fontPx = Math.min(58, Math.max(14, rect.width * 0.032)) * size / 100;
+    const primaryFontPx = Math.min(58, Math.max(14, rect.width * 0.032)) * settings.subSize / 100;
+    const primaryHeight = lastPrimaryRenderedHeight || primaryFontPx * 1.25;
+    const stackOffset = secondary && parsedSubtitles.length ? primaryHeight + settings.dualGap : 0;
+    const left = rect.left + rect.width / 2 + settings.posOffsetX;
+    const anchor = settings.positionTop
+        ? rect.top + rect.height * settings.edgeBottom / 100 - settings.posOffsetY + stackOffset
+        : rect.top + rect.height * (1 - settings.edgeBottom / 100) - settings.posOffsetY - stackOffset;
+    const position = settings.positionTop ? `top:${anchor}px;` : `bottom:${window.innerHeight - anchor}px;`;
+    const overlay = container._assOverlay;
+    const geometry = overlay
+        ? `left:${rect.left}px;top:${rect.top}px;width:${rect.width}px;height:${rect.height}px;`
+        : `left:${left}px;${position}transform:translateX(-50%);width:${rect.width * maxWidthRatio}px;`;
+    const dragging = settings.dragMode && !secondary;
+    const css = `all:initial;position:fixed;${geometry}
+        z-index:${secondary ? 2147483645 : 2147483646};text-align:center;
+        font-family:${font};font-size:${fontPx}px;font-weight:bold;line-height:1.25;
+        color:${color};opacity:${opacity / 100};white-space:pre-wrap;overflow-wrap:break-word;
+        text-shadow:${buildTextShadow(outline, width, shadow)};
+        pointer-events:${dragging && !overlay ? "auto" : "none"};
+        touch-action:${dragging ? "none" : "auto"};
+        ${dragging && !overlay ? "outline:1px dashed #ffb300;cursor:grab;" : ""}`;
+    if (container._assCSS !== css) { container.style.cssText = css; container._assCSS = css; }
+    container.style.display = settings.isEnabled && container._assEntries?.length && (!secondary || settings.dualEnabled) ? "block" : "none";
+    if (overlay) {
+        for (const node of container._assContent.children) {
+            if (node._assDefault) {
+                const top = anchor - rect.top;
+                node.style.cssText = `position:absolute;left:${rect.width / 2 + settings.posOffsetX}px;
+                    top:${top}px;transform:translate(-50%,${settings.positionTop ? "0" : "-100%"});
+                    width:${rect.width * maxWidthRatio}px;white-space:pre-wrap;text-align:center;
+                    pointer-events:${dragging ? "auto" : "none"};touch-action:${dragging ? "none" : "auto"};`;
+            } else styleOverlayEntry(node, node._assEntry, rect, secondary ? playResX2 : playResX, secondary ? playResY2 : playResY, size);
+        }
+    }
+}
+
+function updateSubStyle() { applyContainerStyle(customSubContainer, false); }
+function updateSubStyle2() { applyContainerStyle(customSubContainer2, true); }
+
+function renderEntries(container, entries, secondary) {
+    if (!container) return;
+    const old = container._assEntries || [];
+    const changed = old.length !== entries.length || entries.some((entry, i) => entry !== old[i]);
+    if (changed) {
+        container._assEntries = entries;
+        container._assContent.textContent = "";
+        container._assOverlay = entries.some(entry => entry.pos || (entry.alignment && entry.alignment !== 2));
+        if (container._assOverlay) {
+            const defaults = entries.filter(e => !e.pos && (!e.alignment || e.alignment === 2));
+            for (const entry of entries) {
+                if (defaults.includes(entry)) continue;
+                const node = document.createElement("div");
+                node._assEntry = entry;
+                setSubText(node, entry.text);
+                container._assContent.appendChild(node);
+            }
+            if (defaults.length) {
+                const node = document.createElement("div");
+                node._assDefault = true;
+                setSubText(node, defaults.map(e => e.text).join("\n"));
+                container._assContent.appendChild(node);
+            }
+        } else setSubText(container._assContent, entries.map(e => e.text).join("\n"));
+    }
+    applyContainerStyle(container, secondary);
+    if (!secondary && entries.length && container.style.display !== "none") {
+        const textBox = container._assOverlay ? Array.from(container._assContent.children).find(n => n._assDefault) : container;
+        const height = textBox?.getBoundingClientRect().height;
+        if (height > 0) lastPrimaryRenderedHeight = height;
+    }
+}
+
+function enableDragHandlers(container) {
+    let drag = null;
+    container.addEventListener("pointerdown", e => {
+        if (!settings.dragMode || (e.pointerType === "mouse" && e.button !== 0)) return;
+        drag = { id: e.pointerId, x: e.clientX, y: e.clientY, baseX: settings.posOffsetX, baseY: settings.posOffsetY };
+        container.setPointerCapture(e.pointerId);
         e.preventDefault();
     });
-    window.addEventListener("mousemove", (e) => {
-        if (!dragging) return;
-        settings.posOffsetX = baseX + (e.clientX - startX);
-        settings.posOffsetY = -(e.clientY - startY) + baseY;
-        updateSubStyle();
+    container.addEventListener("pointermove", e => {
+        if (!drag || drag.id !== e.pointerId) return;
+        settings.posOffsetX = drag.baseX + e.clientX - drag.x;
+        settings.posOffsetY = drag.baseY - e.clientY + drag.y;
+        updateSubStyle(); updateSubStyle2();
     });
-    window.addEventListener("mouseup", () => {
-        if (!dragging) return;
-        dragging = false;
+    const endDrag = e => {
+        if (!drag || e.pointerId !== drag.id) return;
+        drag = null;
         chrome.storage.local.set({ posOffsetX: settings.posOffsetX, posOffsetY: settings.posOffsetY });
-    });
+    };
+    for (const event of ["pointerup", "pointercancel", "lostpointercapture"]) container.addEventListener(event, endDrag);
+}
+
+// Replaced video elements cannot paint DOM children in native fullscreen.
+// Use one extension-owned native text track while that fullscreen mode is active.
+const nativeTracks = new WeakMap();
+let nativeTrack = null, nativeVideo = null, nativeText = "";
+function updateNativeFullscreen(entries, entries2) {
+    const nativeFullscreen = activeVideo && getFullscreenElement() === activeVideo;
+    if (!nativeFullscreen || !settings.isEnabled) {
+        if (nativeTrack) {
+            nativeTrack.mode = "disabled";
+            for (const cue of Array.from(nativeTrack.cues || [])) nativeTrack.removeCue(cue);
+        }
+        nativeText = "";
+        return;
+    }
+    if (nativeVideo !== activeVideo) {
+        if (nativeTrack) nativeTrack.mode = "disabled";
+        nativeVideo = activeVideo;
+        nativeTrack = nativeTracks.get(activeVideo);
+        if (!nativeTrack) {
+            nativeTrack = activeVideo.addTextTrack("subtitles", "ASS Subtitle Player", settings.uiLang);
+            nativeTracks.set(activeVideo, nativeTrack);
+        }
+        nativeText = "";
+    }
+    nativeTrack.mode = "showing";
+    const text = [...(settings.dualEnabled ? entries2 : []), ...entries].map(e => e.text).join("\n");
+    if (text === nativeText) return;
+    nativeText = text;
+    for (const cue of Array.from(nativeTrack.cues || [])) nativeTrack.removeCue(cue);
+    if (text) {
+        const safe = document.createElement("div");
+        setSubText(safe, text);
+        for (const br of safe.querySelectorAll("br")) br.replaceWith(document.createTextNode("\n"));
+        const cue = new VTTCue(0, Math.max(86400, activeVideo.currentTime + 86400), escapeSubtitleHTML(safe.textContent));
+        cue.line = settings.positionTop ? 10 : 90;
+        nativeTrack.addCue(cue);
+    }
 }
 
 function ensureSyncLoop(videoElement) {
     activeVideo = videoElement;
     if (syncAnimationId) cancelAnimationFrame(syncAnimationId);
-
     function checkTime() {
-        if (!activeVideo || !document.body.contains(activeVideo)) {
-            const v = getActiveVideo();
-            if (v) { activeVideo = v; activeVideoSrc = v.currentSrc; }
+        if (!activeVideo || !activeVideo.isConnected) activeVideo = getActiveVideo();
+        if (!activeVideo) {
+            if (customSubContainer) customSubContainer.style.display = "none";
+            if (customSubContainer2) customSubContainer2.style.display = "none";
+            updateNativeFullscreen([], []);
+            syncAnimationId = null;
+            return;
         }
-        if (activeVideo) {
-            ensureContainerParent(customSubContainer);
-            ensureContainerParent(customSubContainer2);
-            updateSubStyle();
-            updateSubStyle2();
-
-            if (!settings.isEnabled) {
-                if (customSubContainer) customSubContainer.style.display = "none";
-                if (customSubContainer2) customSubContainer2.style.display = "none";
-            } else {
-                const t = activeVideo.currentTime - settings.delaySeconds;
-                if (customSubContainer && parsedSubtitles.length) {
-                    // Collect ALL active subtitles at current time (not just the first)
-                    const activeEntries = [];
-                    for (let i = 0; i < parsedSubtitles.length; i++) {
-                        if (t >= parsedSubtitles[i].start && t <= parsedSubtitles[i].end) {
-                            activeEntries.push(parsedSubtitles[i]);
-                        }
-                    }
-
-                    if (activeEntries.length === 0) {
-                        customSubContainer.textContent = "";
-                        customSubContainer.style.display = "none";
-                    } else {
-                        const hasPositioned = activeEntries.some(e => e.pos);
-                        const hasNonDefaultAlign = activeEntries.some(e => e.alignment && e.alignment !== 2);
-                        const needsOverlay = hasPositioned || hasNonDefaultAlign;
-                        customSubContainer.textContent = ""; // clear previous content
-
-                        if (needsOverlay) {
-                            // Switch container to video-overlay mode for absolute positioning
-                            const rect = getVideoContentRect(activeVideo);
-                            const fontSize = `calc(clamp(14px, ${rect.width * 0.032}px, 58px) * ${settings.subSize / 100})`;
-                            customSubContainer.style.cssText = `
-                                position: fixed;
-                                left: ${rect.left}px; top: ${rect.top}px;
-                                width: ${rect.width}px; height: ${rect.height}px;
-                                pointer-events: ${settings.dragMode ? "auto" : "none"};
-                                z-index: 2147483646;
-                                font-family: ${settings.subFont}; font-size: ${fontSize}; font-weight: bold;
-                                color: ${settings.subColor}; opacity: ${settings.subOpacity / 100};
-                                text-shadow: ${buildTextShadow(settings.borderColor, settings.borderWidth, settings.shadowLevel)};
-                                display: block; white-space: pre-wrap; line-height: 1.25;
-                                overflow: visible;
-                            `;
-                            activeEntries.forEach(entry => {
-                                const div = document.createElement("div");
-                                setSubText(div, entry.text);
-                                styleOverlayEntry(div, entry, rect, playResX, playResY, settings.subSize);
-                                customSubContainer.appendChild(div);
-                            });
-                        } else {
-                            // All lines are default alignment (2) with no \pos: merge texts (backward-compatible)
-                            const merged = activeEntries.map(e => e.text).join("\n");
-                            setSubText(customSubContainer, merged);
-                        }
-                        customSubContainer.style.display = "block";
-                        // Cache the rendered height while visible so secondary position stays stable
-                        const h = customSubContainer.getBoundingClientRect().height;
-                        if (h > 0) lastPrimaryRenderedHeight = h;
-                    }
-                }
-                if (customSubContainer2 && settings.dualEnabled && parsedSubtitles2.length) {
-                    // Collect ALL active subtitles at current time (not just the first)
-                    const activeEntries2 = [];
-                    for (let i = 0; i < parsedSubtitles2.length; i++) {
-                        if (t >= parsedSubtitles2[i].start && t <= parsedSubtitles2[i].end) {
-                            activeEntries2.push(parsedSubtitles2[i]);
-                        }
-                    }
-
-                    if (activeEntries2.length === 0) {
-                        customSubContainer2.textContent = "";
-                        customSubContainer2.style.display = "none";
-                    } else {
-                        const hasPositioned2 = activeEntries2.some(e => e.pos);
-                        const hasNonDefaultAlign2 = activeEntries2.some(e => e.alignment && e.alignment !== 2);
-                        const needsOverlay2 = hasPositioned2 || hasNonDefaultAlign2;
-                        customSubContainer2.textContent = "";
-
-                        if (needsOverlay2) {
-                            // Switch container to video-overlay mode for absolute positioning
-                            const rect = getVideoContentRect(activeVideo);
-                            const font2 = (settings.subFont2 && settings.subFont2 !== "") ? settings.subFont2 : settings.subFont;
-                            const fontSize2 = `calc(clamp(14px, ${rect.width * 0.032}px, 58px) * ${settings.subSize2 / 100})`;
-                            customSubContainer2.style.cssText = `
-                                position: fixed;
-                                left: ${rect.left}px; top: ${rect.top}px;
-                                width: ${rect.width}px; height: ${rect.height}px;
-                                pointer-events: none; z-index: 2147483645;
-                                font-family: ${font2}; font-size: ${fontSize2}; font-weight: bold;
-                                color: ${settings.subColor2};
-                                opacity: ${(settings.subOpacity2 !== undefined ? settings.subOpacity2 : 100) / 100};
-                                text-shadow: ${buildTextShadow(settings.borderColor2 || "#000000", settings.borderWidth2 !== undefined ? settings.borderWidth2 : 2, settings.shadowLevel2 || "normal")};
-                                display: block; white-space: pre-wrap; line-height: 1.25;
-                                overflow: visible;
-                            `;
-                            activeEntries2.forEach(entry => {
-                                const div = document.createElement("div");
-                                setSubText(div, entry.text);
-                                styleOverlayEntry(div, entry, rect, playResX2, playResY2, settings.subSize2 !== undefined ? settings.subSize2 : 100);
-                                customSubContainer2.appendChild(div);
-                            });
-                        } else {
-                            // All lines are default alignment (2) with no \pos: merge texts (backward-compatible)
-                            const merged2 = activeEntries2.map(e => e.text).join("\n");
-                            setSubText(customSubContainer2, merged2);
-                        }
-                        customSubContainer2.style.display = "block";
-                    }
-                }
-            }
-        }
+        const t = activeVideo.currentTime - settings.delaySeconds;
+        const entries = settings.isEnabled ? collectActiveEntries(parsedSubtitles, t) : [];
+        const entries2 = settings.isEnabled && settings.dualEnabled ? collectActiveEntries(parsedSubtitles2, t) : [];
+        ensureContainerParent(customSubContainer);
+        ensureContainerParent(customSubContainer2);
+        renderEntries(customSubContainer, entries, false);
+        renderEntries(customSubContainer2, entries2, true);
+        updateNativeFullscreen(entries, entries2);
         syncAnimationId = requestAnimationFrame(checkTime);
     }
     checkTime();
 }
 
-let audioCtxRef = null;
+let autoSyncSession = null;
+function stopAutoSync() {
+    if (!autoSyncSession) return;
+    const session = autoSyncSession;
+    autoSyncSession = null;
+    cancelAnimationFrame(session.animationId);
+    session.source?.disconnect();
+    session.analyser?.disconnect();
+    session.stream?.getTracks().forEach(track => track.stop());
+    if (session.context) session.context.close().catch(() => {});
+}
 
-function startAutoSyncEstimate() {
+async function startAutoSyncEstimate() {
     const video = getActiveVideo();
-    if (!video) { showAutoSyncPanel(tr("autosync_no_video"), null); return; }
-    if (parsedSubtitles.length === 0) { showAutoSyncPanel(tr("autosync_need_subtitle"), null); return; }
-
-    let source;
+    if (!video) throw new Error(tr("autosync_no_video"));
+    if (!parsedSubtitles.length) throw new Error(tr("autosync_need_subtitle"));
+    stopAutoSync();
+    const session = { video, animationId: null };
+    autoSyncSession = session;
     try {
-        audioCtxRef = audioCtxRef || new (window.AudioContext || window.webkitAudioContext)();
-        if (!video.__assExtAudioSource) {
-            source = audioCtxRef.createMediaElementSource(video);
-            video.__assExtAudioSource = source;
-        } else {
-            source = video.__assExtAudioSource;
-        }
-        const analyser = audioCtxRef.createAnalyser();
-        analyser.fftSize = 1024;
-        source.connect(analyser);
-        analyser.connect(audioCtxRef.destination);
-
+        // A MediaElementSource permanently reroutes playback and can mute cross-origin video.
+        // Analyse a captured copy instead, without connecting it to the speakers.
+        const capture = video.captureStream || video.mozCaptureStream;
+        if (!capture) throw new Error(tr("autosync_capture_unavailable"));
+        session.stream = capture.call(video);
+        if (!session.stream.getAudioTracks().length) throw new Error(tr("autosync_capture_unavailable"));
+        session.context = new (window.AudioContext || window.webkitAudioContext)();
+        await session.context.resume();
+        if (autoSyncSession !== session) return;
+        session.source = session.context.createMediaStreamSource(session.stream);
+        session.analyser = session.context.createAnalyser();
+        session.analyser.fftSize = 1024;
+        session.source.connect(session.analyser);
         showAutoSyncPanel(tr("autosync_analyzing"), null, true);
-
-        if (video.paused) video.play().catch(() => {});
-
-        const data = new Uint8Array(analyser.frequencyBinCount);
-        const onsets = [];
-        let wasQuiet = true;
-        let quietSince = performance.now();
-        const ANALYSIS_MS = 30000;
-        const startedAt = performance.now();
-
+        if (video.paused) await video.play();
+        if (autoSyncSession !== session) return;
+        const data = new Uint8Array(session.analyser.fftSize), onsets = [];
+        const startedAt = performance.now(), startTime = video.currentTime;
+        let quietSince = startedAt, wasQuiet = true;
+        let lastTime = startTime, lastWallTime = startedAt;
         const tick = () => {
-            analyser.getByteTimeDomainData(data);
+            if (autoSyncSession !== session) return;
+            const now = performance.now(), time = video.currentTime;
+            const expected = (now - lastWallTime) / 1000 * video.playbackRate;
+            if (!video.isConnected || Math.abs(time - lastTime - expected) > 2) {
+                stopAutoSync();
+                showAutoSyncPanel(tr("autosync_interrupted"), null);
+                return;
+            }
+            lastTime = time; lastWallTime = now;
+            session.analyser.getByteTimeDomainData(data);
             let sum = 0;
-            for (let i = 0; i < data.length; i++) { const v = data[i] - 128; sum += v * v; }
-            const rms = Math.sqrt(sum / data.length);
-            const isQuiet = rms < 6;
-            if (isQuiet) {
-                if (!wasQuiet) quietSince = performance.now();
-                wasQuiet = true;
-            } else if (wasQuiet && (performance.now() - quietSince) > 250) {
-                onsets.push(video.currentTime);
+            for (const sample of data) sum += (sample - 128) ** 2;
+            const quiet = Math.sqrt(sum / data.length) < 6;
+            if (quiet) { if (!wasQuiet) quietSince = now; wasQuiet = true; }
+            else {
+                if (wasQuiet && now - quietSince > 250) onsets.push(time);
                 wasQuiet = false;
             }
-            if (performance.now() - startedAt < ANALYSIS_MS && !video.paused) {
-                requestAnimationFrame(tick);
-            } else {
-                finishAnalysis(onsets, startTime, startTime + ANALYSIS_MS / 1000);
+            if (now - startedAt < 30000 && !video.paused && !video.ended) session.animationId = requestAnimationFrame(tick);
+            else {
+                stopAutoSync();
+                finishAnalysis(onsets, startTime, time);
             }
         };
-        requestAnimationFrame(tick);
-    } catch (err) {
-        showAutoSyncPanel(tr("autosync_drm_error", { error: err.message }), null);
+        session.animationId = requestAnimationFrame(tick);
+    } catch (error) {
+        if (autoSyncSession === session) {
+            stopAutoSync();
+            showAutoSyncPanel(tr("autosync_drm_error", { error: error.message }), null);
+        }
     }
 }
 
@@ -1262,6 +1183,7 @@ function finishAnalysis(onsets, windowStart, windowEnd) {
         });
         if (score > bestScore) { bestScore = score; bestOffset = offset; }
     }
+    if (bestScore <= 0) { showAutoSyncPanel(tr("autosync_not_enough_speech"), null); return; }
     showAutoSyncPanel(
         tr("autosync_result", { offset: bestOffset.toFixed(2), score: bestScore, total: cueStarts.length }),
         bestOffset
@@ -1279,16 +1201,17 @@ function showAutoSyncPanel(message, suggestedOffset, loadingOnly) {
             font-family: 'Segoe UI', sans-serif; font-size: 12px; width: 260px;
             border: 1px solid #3a3a3a; box-shadow: 0 4px 20px rgba(0,0,0,0.7);
         `;
-        document.body.appendChild(panel);
+        ensureContainerParent(panel);
     }
-    panel.innerHTML = "";
+    ensureContainerParent(panel);
+    panel.textContent = "";
     const msg = document.createElement("div");
     msg.innerText = message;
     msg.style.marginBottom = "8px";
     panel.appendChild(msg);
 
-    if (!loadingOnly) {
-        if (suggestedOffset !== null && suggestedOffset !== undefined) {
+    {
+        if (!loadingOnly && suggestedOffset !== null && suggestedOffset !== undefined) {
             const applyBtn = document.createElement("button");
             applyBtn.innerText = tr("autosync_apply");
             applyBtn.style.cssText = "background:#2e7d32;color:white;border:none;padding:6px 10px;border-radius:4px;cursor:pointer;font-weight:bold;margin-right:6px;";
@@ -1303,7 +1226,7 @@ function showAutoSyncPanel(message, suggestedOffset, loadingOnly) {
         const closeBtn = document.createElement("button");
         closeBtn.innerText = tr("autosync_close");
         closeBtn.style.cssText = "background:#555;color:white;border:none;padding:6px 10px;border-radius:4px;cursor:pointer;";
-        closeBtn.onclick = () => panel.remove();
+        closeBtn.onclick = () => { stopAutoSync(); panel.remove(); };
         panel.appendChild(closeBtn);
     }
 }

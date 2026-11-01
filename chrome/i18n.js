@@ -9,7 +9,7 @@ const I18N = {
         // Header / top controls
         ext_title: "Subtitle Player",
         enable_extension: "Enable extension",
-        upload_primary: "Select subtitle (.ass, .srt)",
+        upload_primary: "Select subtitle (.ass, .ssa, .srt)",
         load_last_primary: "Load last subtitle",
 
         // Tabs
@@ -76,6 +76,10 @@ const I18N = {
         dual_hint: "The secondary subtitle appears stacked just above the primary subtitle at the bottom.",
 
         // Search tab
+        os_api_key_label: "OpenSubtitles API key",
+        os_api_key_save: "Save API key",
+        os_api_key_hint: "Required for online search. Stored only in this browser and sent only to OpenSubtitles.",
+        os_api_key_get: "Get an OpenSubtitles API key",
         search_card_label: "Search OpenSubtitles",
         search_placeholder: "Movie / show title…",
         lang_tr: "Turkish",
@@ -129,9 +133,16 @@ const I18N = {
         autosync_apply: "Apply",
         autosync_close: "Close",
         reset_all_settings: "Reset all settings",
-        reset_all_confirm: "Are you sure you want to reset all extension settings to their defaults? This will reload the extension.",
-        
+        reset_all_confirm: "Are you sure you want to reset all extension settings to their defaults? This also clears saved subtitle files.",
+
         // Custom additions
+        subtitle_invalid_file: "Choose an .ass, .ssa, or .srt subtitle file.",
+        subtitle_too_large: "Subtitle files must be smaller than 20 MB.",
+        subtitle_load_failed: "The subtitle could not be loaded in the video frame.",
+        subtitle_no_cues: "No valid subtitle lines found. Check the file format and timings.",
+        subtitle_no_saved: "No saved subtitle file is available.",
+        autosync_capture_unavailable: "Audio capture is unavailable for this video.",
+        autosync_interrupted: "Analysis stopped because the video changed or was seeked. Try again.",
         toast_sub_loaded: "Subtitle successfully loaded!",
         toast_sub_loaded_sec: "Secondary subtitle loaded!",
         position_top_label: "Move to top (Toggle)",
@@ -140,7 +151,7 @@ const I18N = {
     tr: {
         ext_title: "Subtitle Player",
         enable_extension: "Eklentiyi etkinleştir",
-        upload_primary: "Altyazı seç (.ass, .srt)",
+        upload_primary: "Altyazı seç (.ass, .ssa, .srt)",
         load_last_primary: "Son altyazıyı yükle",
 
         tab_style: "Stil",
@@ -203,6 +214,10 @@ const I18N = {
         dual_gap_label: "Satırlar arası boşluk",
         dual_hint: "İkincil altyazı, birincil altyazının hemen üstünde (alt kısımda) üst üste gösterilir.",
 
+        os_api_key_label: "OpenSubtitles API anahtarı",
+        os_api_key_save: "API anahtarını kaydet",
+        os_api_key_hint: "Çevrimiçi arama için gereklidir. Yalnızca bu tarayıcıda saklanır ve OpenSubtitles'a gönderilir.",
+        os_api_key_get: "OpenSubtitles API anahtarı edin",
         search_card_label: "OpenSubtitles'da ara",
         search_placeholder: "Dizi / film adı…",
         lang_tr: "Türkçe",
@@ -253,9 +268,16 @@ const I18N = {
         autosync_apply: "Uygula",
         autosync_close: "Kapat",
         reset_all_settings: "Tüm ayarları sıfırla",
-        reset_all_confirm: "Eklentinin tüm ayarlarını varsayılana döndürmek istediğinize emin misiniz? Bu işlem eklentiyi yeniden başlatacaktır.",
-        
+        reset_all_confirm: "Eklentinin tüm ayarlarını varsayılana döndürmek istediğinize emin misiniz? Kaydedilmiş altyazı dosyaları da silinecektir.",
+
         // Custom additions
+        subtitle_invalid_file: ".ass, .ssa veya .srt biçiminde bir altyazı dosyası seçin.",
+        subtitle_too_large: "Altyazı dosyası 20 MB boyutundan küçük olmalıdır.",
+        subtitle_load_failed: "Altyazı video karesine yüklenemedi.",
+        subtitle_no_cues: "Geçerli altyazı satırı bulunamadı. Dosya biçimini ve zamanlarını kontrol edin.",
+        subtitle_no_saved: "Kaydedilmiş bir altyazı dosyası bulunamadı.",
+        autosync_capture_unavailable: "Bu videonun sesi analiz için alınamıyor.",
+        autosync_interrupted: "Video değiştiği veya zaman atlaması yapıldığı için analiz durduruldu. Yeniden deneyin.",
         toast_sub_loaded: "Altyazı başarıyla eklendi!",
         toast_sub_loaded_sec: "İkincil altyazı eklendi!",
         position_top_label: "Üste taşı (Aç/Kapat)",

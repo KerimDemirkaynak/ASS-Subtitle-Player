@@ -3,6 +3,7 @@ document.addEventListener("DOMContentLoaded", () => {
     let currentLang = "en";
 
     function applyI18n(lang) {
+        document.documentElement.lang = lang;
         document.querySelectorAll("[data-i18n]").forEach(el => {
             el.textContent = i18nText(el.getAttribute("data-i18n"), lang);
         });
@@ -32,10 +33,14 @@ document.addEventListener("DOMContentLoaded", () => {
         });
     });
 
+    async function sendPlayerMessage(command) {
+        const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
+        if (!tabs[0] || tabs[0].id === undefined) return { ok: false, code: "E101" };
+        return chrome.runtime.sendMessage({ type: "PLAYER_COMMAND", tabId: tabs[0].id, command });
+    }
+
     function broadcastMessage(msg) {
-        chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-            if (tabs[0]) chrome.tabs.sendMessage(tabs[0].id, msg, { frameId: undefined }).catch(() => {});
-        });
+        return sendPlayerMessage(msg).catch(() => null);
     }
 
     // ---- Real-error reporting for actions that close the popup ----------
@@ -67,7 +72,7 @@ document.addEventListener("DOMContentLoaded", () => {
     }
     function clearErrorCode() { $("error-banner").style.display = "none"; }
 
-    function sendAndConfirm(msg) {
+    function sendAndConfirm(msg, closeAfter = true) {
         clearErrorCode();
         const ATTEMPTS = 4, WAIT_MS = 400;
         chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
@@ -77,10 +82,13 @@ document.addEventListener("DOMContentLoaded", () => {
             const tryOnce = () => {
                 attempt++;
                 let p;
-                try { p = chrome.tabs.sendMessage(tab.id, msg); } catch (e) { p = Promise.reject(e); }
+                try { p = chrome.runtime.sendMessage({ type: "PLAYER_COMMAND", tabId: tab.id, command: msg }); } catch (e) { p = Promise.reject(e); }
                 Promise.resolve(p).then((res) => {
-                    if (res && res.ok === true) { window.close(); return; }
-                    if (res && res.ok === false) { showErrorCode(res.code || "E104", res.detail); return; }
+                    if (res && res.ok === true) { if (closeAfter) window.close(); return; }
+                    if (res && res.ok === false) {
+                        if (["E102", "E103"].includes(res.code) && attempt < ATTEMPTS) { setTimeout(tryOnce, WAIT_MS); return; }
+                        showErrorCode(res.code || "E104", res.detail || res.error); return;
+                    }
                     // Page is reachable but no frame with a video answered (yet)
                     if (attempt < ATTEMPTS) setTimeout(tryOnce, WAIT_MS);
                     else showErrorCode("E103");
@@ -97,22 +105,32 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     function getActiveTab(cb) {
-        chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => cb(tabs[0]));
+        chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => cb(tabs && tabs[0]));
     }
 
     function saveAndBroadcastStyle(patch) {
-        chrome.storage.local.set(patch);
-        broadcastMessage({ type: "STYLE_UPDATE", patch });
+        getActiveTab(tab => {
+            const host = subtitleHostname(tab?.url);
+            chrome.storage.local.get(["siteProfiles"], data => {
+                const siteProfiles = data.siteProfiles || {};
+                const update = { ...patch };
+                if (siteProfiles[host]) {
+                    siteProfiles[host] = { ...siteProfiles[host], ...patch };
+                    update.siteProfiles = siteProfiles;
+                }
+                chrome.storage.local.set(update);
+            });
+        });
     }
 
-    const STORAGE_KEYS = [
-        "uiLang","isEnabled","aspectMode","subSize","subOpacity","subColor","borderColor",
-        "borderWidth","shadowLevel","subFont","edgeBottom","delaySeconds","dualEnabled",
-        "subColor2","subSize2","subOpacity2","subFont2","borderColor2","borderWidth2",
-        "shadowLevel2","dualGap","autoRestoreLastSubtitle","syncProfiles","siteProfiles","positionTop"
-    ];
+    const STORAGE_KEYS = Object.keys(ASS_DEFAULTS);
+    function refreshSettings() {
+        getActiveTab(tab => chrome.storage.local.get(STORAGE_KEYS, raw => {
+            applySettings(resolveSubtitleSettings(raw, subtitleHostname(tab?.url)));
+        }));
+    }
 
-    chrome.storage.local.get(STORAGE_KEYS, (data) => {
+    function applySettings(data) {
         currentLang = data.uiLang === "tr" ? "tr" : "en";
         applyI18n(currentLang);
 
@@ -138,7 +156,10 @@ document.addEventListener("DOMContentLoaded", () => {
         if (data.dualGap !== undefined) { $("dual-gap-slider").value = data.dualGap; $("dual-gap-value").innerText = data.dualGap + "px"; }
         if (data.autoRestoreLastSubtitle !== undefined) $("auto-restore-toggle").checked = data.autoRestoreLastSubtitle;
         if (data.positionTop !== undefined) $("position-top-toggle").checked = data.positionTop;
-    });
+        $("drag-mode-toggle").checked = data.dragMode;
+    }
+    refreshSettings();
+    chrome.storage.onChanged.addListener((_changes, area) => { if (area === "local") refreshSettings(); });
 
     getActiveTab((tab) => {
         try {
@@ -199,7 +220,6 @@ document.addEventListener("DOMContentLoaded", () => {
         broadcastMessage({ type: "TOGGLE_DRAG_MODE", dragMode: e.target.checked });
     });
     $("position-top-toggle").addEventListener("change", (e) => {
-        chrome.storage.local.set({ positionTop: e.target.checked });
         saveAndBroadcastStyle({ positionTop: e.target.checked });
     });
 
@@ -215,7 +235,7 @@ document.addEventListener("DOMContentLoaded", () => {
             const v = Math.round(((data.delaySeconds || 0) + delta) * 100) / 100;
             updateDelayUI(v);
             chrome.storage.local.set({ delaySeconds: v });
-            broadcastMessage({ type: "ADJUST_DELAY", delta });
+            broadcastMessage({ type: "SET_DELAY", value: v });
         });
     }
     $("delay-minus-1").addEventListener("click", () => nudgeDelay(-1));
@@ -228,9 +248,9 @@ document.addEventListener("DOMContentLoaded", () => {
         broadcastMessage({ type: "RESET_DELAY" });
     });
     $("delay-bake").addEventListener("click", () => {
-        broadcastMessage({ type: "BAKE_DELAY" });
-        updateDelayUI(0);
-        chrome.storage.local.set({ delaySeconds: 0 });
+        chrome.storage.local.get(["delaySeconds"], data => {
+            sendAndConfirm({ type: "BAKE_DELAY", value: data.delaySeconds || 0 }, false);
+        });
     });
 
     $("frame-shift-apply").addEventListener("click", () => {
@@ -243,7 +263,7 @@ document.addEventListener("DOMContentLoaded", () => {
     $("fps-convert-btn").addEventListener("click", () => {
         const fromFps = Number($("fps-from").value);
         const toFps = Number($("fps-to").value);
-        broadcastMessage({ type: "CONVERT_FPS", fromFps, toFps });
+        sendAndConfirm({ type: "CONVERT_FPS", fromFps, toFps }, false);
     });
 
     function saveSyncProfile(slot) {
@@ -301,19 +321,36 @@ document.addEventListener("DOMContentLoaded", () => {
         saveAndBroadcastStyle({ dualGap: Number(e.target.value) });
     });
 
+    function refreshApiKey() {
+        chrome.storage.local.get(["openSubtitlesApiKey"], data => {
+            $("os-api-key").value = data.openSubtitlesApiKey || "";
+        });
+    }
+    refreshApiKey();
+    chrome.storage.onChanged.addListener((changes, area) => {
+        if (area === "local" && changes.openSubtitlesApiKey) refreshApiKey();
+    });
+    $("os-api-key-save").addEventListener("click", () => {
+        chrome.storage.local.set({ openSubtitlesApiKey: $("os-api-key").value.trim() });
+    });
+
+    let searchGeneration = 0;
     $("search-btn").addEventListener("click", () => {
+        const generation = ++searchGeneration;
         const query = $("search-query").value.trim();
         const lang = $("search-lang").value;
         const statusEl = $("search-status");
         const resultsEl = $("search-results");
-        
-        resultsEl.textContent = ""; 
-        
+
+        resultsEl.textContent = "";
+
         if (!query) { statusEl.innerText = i18nText("search_enter_title", currentLang); return; }
         statusEl.innerText = i18nText("search_searching", currentLang);
 
         chrome.runtime.sendMessage({ type: "OS_SEARCH", query, lang }, (res) => {
-            if (!res || !res.ok) {
+            const lastError = chrome.runtime.lastError;
+            if (generation !== searchGeneration) return;
+            if (lastError || !res || !res.ok) {
                 const errMsg = res ? res.error : i18nText("search_unknown_error", currentLang);
                 statusEl.innerText = i18nText("search_error", currentLang, { error: errMsg });
                 return;
@@ -347,19 +384,24 @@ document.addEventListener("DOMContentLoaded", () => {
         dlBtn.innerText = i18nText("download_btn", currentLang);
         dlBtn.className = "btn-amber";
         dlBtn.addEventListener("click", () => {
+            const target = $("search-target").value;
             dlBtn.innerText = i18nText("download_downloading", currentLang);
             dlBtn.disabled = true;
-            chrome.runtime.sendMessage({ type: "OS_DOWNLOAD", file_id: r.file_id }, (res) => {
-                if (!res || !res.ok) {
+            chrome.runtime.sendMessage({ type: "OS_DOWNLOAD", file_id: r.file_id }, async (res) => {
+                const lastError = chrome.runtime.lastError;
+                if (lastError || !res || !res.ok) {
                     const errMsg = res ? res.error : i18nText("download_unknown_error", currentLang);
                     dlBtn.innerText = i18nText("download_error", currentLang, { error: errMsg });
                     dlBtn.disabled = false;
                     return;
                 }
                 const ext = (res.fileName.split(".").pop() || "srt").toLowerCase();
-                const target = $("search-target").value;
-                broadcastMessage({ type: "LOAD_SUBTITLE_TEXT", text: res.text, ext, name: res.fileName, target });
-                dlBtn.innerText = i18nText("download_loaded", currentLang);
+                const response = await sendPlayerMessage({ type: "LOAD_SUBTITLE_TEXT", text: res.text, ext, name: res.fileName, target }).catch(error => ({ error: error.message }));
+                if (response?.ok) dlBtn.innerText = i18nText("download_loaded", currentLang);
+                else {
+                    dlBtn.innerText = i18nText("download_error", currentLang, { error: response?.detail || response?.error || response?.code || "E102" });
+                    dlBtn.disabled = false;
+                }
             });
         });
         card.appendChild(dlBtn);
@@ -371,11 +413,8 @@ document.addEventListener("DOMContentLoaded", () => {
             let host;
             try { host = new URL(tab.url).hostname.replace(/^www\./, ""); } catch (e) { return; }
             chrome.storage.local.get(STORAGE_KEYS, (data) => {
-                const patch = {
-                    subSize: data.subSize, subOpacity: data.subOpacity, subColor: data.subColor,
-                    borderColor: data.borderColor, borderWidth: data.borderWidth, shadowLevel: data.shadowLevel,
-                    subFont: data.subFont, edgeBottom: data.edgeBottom, aspectMode: data.aspectMode
-                };
+                const effective = resolveSubtitleSettings(data, host);
+                const patch = Object.fromEntries(ASS_STYLE_KEYS.map(key => [key, effective[key]]));
                 const siteProfiles = data.siteProfiles || {};
                 siteProfiles[host] = patch;
                 chrome.storage.local.set({ siteProfiles });
